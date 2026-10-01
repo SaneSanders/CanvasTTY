@@ -115,6 +115,31 @@ export function registerMaterialIpc(ipcMain: IpcRegistrar, { materials, handoffs
   });
 
 
+  ipcMain.handle(IPC.materialsReadText, (event, id: unknown, versionId: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.readText(requireId(id), versionId === null ? null : requireId(versionId));
+  });
+
+  ipcMain.handle(IPC.materialsSaveText, (event, id: unknown, edit: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.saveText(requireId(id), edit);
+  });
+
+  ipcMain.handle(IPC.materialsReadDraft, (event, id: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.readDraft(requireId(id));
+  });
+
+  ipcMain.handle(IPC.materialsWriteDraft, (event, id: unknown, edit: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.writeDraft(requireId(id), edit);
+  });
+
+  ipcMain.handle(IPC.materialsDiscardDraft, (event, id: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    materials.discardDraft(requireId(id));
+  });
+
   ipcMain.handle(IPC.materialsPickResultsFolder, async (event, sessionId: unknown) => {
     assertMainRenderer(event, getMainWindow);
     const owner = BrowserWindow.fromWebContents(event.sender);

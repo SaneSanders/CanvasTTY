@@ -16,6 +16,8 @@ import type {
   CreateSessionRequest,
   HandoffDraft,
   MaterialsSnapshot,
+  MaterialTextEdit,
+  MaterialTextSave,
   PluginBrowserOpenRequest,
   PluginBrowserOpenResponse,
   PluginCanvasRequest,
@@ -145,6 +147,11 @@ const api: CanvasTTYApi = {
     previewHandoff: (draft: HandoffDraft) => ipcRenderer.invoke(IPC.materialsPreviewHandoff, draft),
     sendHandoff: (draft: HandoffDraft) => ipcRenderer.invoke(IPC.materialsSendHandoff, draft),
     pickResultsFolder: (sessionId: string) => ipcRenderer.invoke(IPC.materialsPickResultsFolder, sessionId),
+    readText: (id: string, versionId: string | null) => ipcRenderer.invoke(IPC.materialsReadText, id, versionId),
+    saveText: (id: string, edit: MaterialTextSave) => ipcRenderer.invoke(IPC.materialsSaveText, id, edit),
+    readDraft: (id: string) => ipcRenderer.invoke(IPC.materialsReadDraft, id),
+    writeDraft: (id: string, edit: MaterialTextEdit) => ipcRenderer.invoke(IPC.materialsWriteDraft, id, edit),
+    discardDraft: (id: string) => ipcRenderer.invoke(IPC.materialsDiscardDraft, id),
     onChanged: (listener: (snapshot: MaterialsSnapshot) => void) => subscribe(IPC.materialsChanged, listener)
   },
   limits: {

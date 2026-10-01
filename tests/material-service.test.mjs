@@ -41,7 +41,7 @@ test("dropped files become cards at the drop point; folders, missing and relativ
     assert.deepEqual({ kind: image.kind, name: image.name, location: image.location, state: image.state },
       { kind: "image", name: "hero.png", location: hero, state: "ready" });
     assert.deepEqual(image.size, { width: 440, height: 302 });
-    assert.equal(file.kind, "file");
+    assert.equal(file.kind, "text");
     assert.deepEqual(image.position, { x: 500, y: 300 });
     assert.deepEqual(file.position, { x: 500 + 440 + 24, y: 300 });
     assert.deepEqual(await readFile(hero), pngBytes(1920, 1080, 16));

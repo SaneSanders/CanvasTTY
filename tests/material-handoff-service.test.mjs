@@ -265,6 +265,26 @@ test("agents whose screen CanvasTTY cannot see get the text pasted with image pa
   });
 });
 
+test("a line remark on a text file carries its snapshot and the quoted lines, with no images", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, work, draft }) => {
+    await writeFile(join(work, "notes.md"), "# Plan\n\nShip it on Friday.\nThen rest.\n");
+    await materials.addPaths([join(work, "notes.md")], { x: 0, y: 0 });
+    const notes = materials.snapshot().materials.find((material) => material.name === "notes.md");
+    const lines = (await materials.addRemark({ materialId: notes.id, anchor: { kind: "lines", start: 3, end: 3 }, reference: null, text: "Say Thursday." })).remark;
+    await writeFile(join(work, "notes.md"), "# Plan\n\nShip it whenever.\n");
+    terminal.add({ id: "s1", provider: "claude", cwd: "/work" });
+    terminal.tui = claudeTui(terminal);
+    const result = await handoffs.send(draft("s1", { remarkIds: [lines.id] }));
+    assert.equal(result.ok, true);
+    const pasted = terminal.writes[0];
+    assert.match(pasted, /#2 · notes\.md, version 1 · line 3\n/);
+    assert.match(pasted, /These lines in that version:\n```\nShip it on Friday\.\n```\n/);
+    assert.doesNotMatch(pasted, /Attached images/);
+    assert.deepEqual((await readdir(result.handoff.folder)).sort(), ["2-notes-v1.md", "handoff.md"]);
+    assert.equal(await readFile(join(result.handoff.folder, "2-notes-v1.md"), "utf8"), "# Plan\n\nShip it on Friday.\nThen rest.\n");
+  });
+});
+
 test("sessions that cannot take a handoff right now are refused before anything is written", async () => {
   await withHandoffs(async ({ materials, handoffs, terminal, draft }) => {
     terminal.add({ id: "t", provider: "terminal", cwd: "/work" });

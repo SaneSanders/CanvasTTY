@@ -225,3 +225,7 @@ test("media players on material cards are controls, so pressing play never ancho
   assert.equal(selectorCovers({ tag: "audio" }), true);
   assert.equal(selectorCovers({ tag: "img" }), false, "an image body stays a drag surface");
 });
+
+test("the text of a material card is selected with the pointer, never dragged as a group", () => {
+  assert.equal(selectorCovers({ tag: "div", className: "material-text__scroller" }), true);
+});

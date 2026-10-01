@@ -25,10 +25,12 @@ import { extensionForMime, materialType, HANDOFF_NOTE_LIMIT, handoffBlockFor } f
 import { terminalFileQuotePath } from "../../../shared/terminalFileDrop.ts";
 import { codexComposerReady } from "../agent-control/AgentControlGateway.ts";
 import {
+  excerptLines,
   handoffPointerText,
   handoffText,
   HANDOFF_TEXT_LIMIT,
   type HandoffImageMode,
+  type HandoffTextExcerpt,
   type HandoffTextImage,
   type HandoffTextInput,
   type HandoffTextTarget,
@@ -425,6 +427,11 @@ export class HandoffService {
         images.push({ name, path: join(folder, name) });
       }
     }
+    let excerpt: HandoffTextExcerpt | null = null;
+    if (version.kind === "text" && target.anchor.kind === "lines") {
+      const read = await this.options.materials.readText(target.materialId, target.versionId);
+      if (read.ok) excerpt = excerptLines(read.content.text, target.anchor.start, target.anchor.end);
+    }
     return {
       name: version.name,
       versionNumber: version.number,
@@ -433,7 +440,8 @@ export class HandoffService {
       file,
       marked,
       crop,
-      location: version.location
+      location: version.location,
+      excerpt
     };
   }
 

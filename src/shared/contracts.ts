@@ -293,7 +293,34 @@ export interface CanvasMaterial extends SessionBounds {
   modifiedAt: number | null;
   origin: MaterialOrigin | null;
   versions: MaterialVersion[];
+  draft: MaterialDraftInfo | null;
   createdAt: number;
+}
+
+export interface MaterialDraftInfo {
+  baseHash: string;
+}
+
+export interface MaterialText {
+  text: string;
+  hash: string;
+  eol: "lf" | "crlf";
+  bom: boolean;
+  editable: boolean;
+  byteSize: number;
+}
+
+export interface MaterialTextEdit {
+  baseHash: string;
+  text: string;
+}
+
+export interface MaterialTextSave extends MaterialTextEdit {
+  allowUnversioned?: boolean;
+}
+
+export interface MaterialDraft extends MaterialTextEdit {
+  updatedAt: number;
 }
 
 export interface MaterialStorageUsage {
@@ -334,9 +361,19 @@ export type MaterialFailure =
   | "version-limit"
   | "material-limit"
   | "remark-limit"
-  | "cancelled";
+  | "cancelled"
+  | "not-text"
+  | "read-only"
+  | "write-failed";
 
 export type MaterialResult = { ok: true } | { ok: false; reason: MaterialFailure };
+
+export type MaterialTextResult = { ok: true; content: MaterialText } | { ok: false; reason: MaterialFailure };
+
+export type MaterialSaveResult =
+  | { ok: true; content: MaterialText; previous: MaterialVersion | null }
+  | { ok: false; reason: "conflict"; current: MaterialText }
+  | { ok: false; reason: MaterialFailure };
 
 export type MaterialCreateResult = { ok: true; materialId: string } | { ok: false; reason: MaterialFailure };
 
@@ -1817,6 +1854,11 @@ export interface CanvasTTYApi {
     previewHandoff(draft: HandoffDraft): Promise<HandoffPreviewResult>;
     sendHandoff(draft: HandoffDraft): Promise<HandoffResult>;
     pickResultsFolder(sessionId: string): Promise<string | null>;
+    readText(id: string, versionId: string | null): Promise<MaterialTextResult>;
+    saveText(id: string, edit: MaterialTextSave): Promise<MaterialSaveResult>;
+    readDraft(id: string): Promise<MaterialDraft | null>;
+    writeDraft(id: string, edit: MaterialTextEdit): Promise<MaterialResult>;
+    discardDraft(id: string): Promise<void>;
     onChanged(listener: (snapshot: MaterialsSnapshot) => void): () => void;
   };
   limits: {
@@ -1993,6 +2035,11 @@ export const IPC = {
   materialsPreviewHandoff: "materials:preview-handoff",
   materialsSendHandoff: "materials:send-handoff",
   materialsPickResultsFolder: "materials:pick-results-folder",
+  materialsReadText: "materials:read-text",
+  materialsSaveText: "materials:save-text",
+  materialsReadDraft: "materials:read-draft",
+  materialsWriteDraft: "materials:write-draft",
+  materialsDiscardDraft: "materials:discard-draft",
   materialsChanged: "materials:changed",
   limitsGet: "limits:get",
   pluginsList: "plugins:list",

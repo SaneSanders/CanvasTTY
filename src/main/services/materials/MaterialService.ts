@@ -6,6 +6,7 @@ import type {
   CanvasMaterial,
   HandoffDelivery,
   MaterialCreateResult,
+  MaterialDraft,
   MaterialFailure,
   MaterialHandoff,
   MaterialKind,
@@ -15,6 +16,10 @@ import type {
   MaterialsAddResult,
   MaterialsSnapshot,
   MaterialState,
+  MaterialText,
+  MaterialTextEdit,
+  MaterialTextResult,
+  MaterialSaveResult,
   MaterialVersion,
   MaterialVersionReason,
   MaterialVersionResult,
@@ -42,6 +47,7 @@ import {
 import { streamFile, textResponse } from "../fileResponse.ts";
 import { IMAGE_HEADER_BYTES, imageDimensions } from "./imageDimensions.ts";
 import { fileDigest, MaterialBlobError, MaterialBlobs } from "./MaterialBlobs.ts";
+import { decodeText, encodeText, parseTextEdit, readBounded, replaceFile, TEXT_EDIT_LIMIT } from "./materialText.ts";
 import {
   emptyMaterialState,
   HANDOFF_LIMIT,
@@ -62,6 +68,7 @@ const PERSIST_DELAY_MS = 250;
 const REFRESH_DELAY_MS = 150;
 const POLL_INTERVAL_MS = 10_000;
 const RENAME_SCAN_LIMIT = 5_000;
+const DRAFT_FILE_LIMIT = TEXT_EDIT_LIMIT * 7;
 const RESPONSE_HEADERS = {
   "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
   "x-content-type-options": "nosniff"
@@ -114,8 +121,11 @@ export class MaterialService {
   readonly handoffsPath: string;
   private readonly root: string;
   private readonly statePath: string;
+  private readonly draftsPath: string;
   private readonly blobs: MaterialBlobs;
   private readonly materials = new Map<string, StoredMaterial>();
+  private readonly drafts = new Map<string, MaterialDraft>();
+  private draftQueue: Promise<void> = Promise.resolve();
   private remarks: MaterialRemark[] = [];
   private handoffs: MaterialHandoff[] = [];
   private counters = { remark: 0, handoff: 0 };
@@ -139,6 +149,7 @@ export class MaterialService {
     this.options = options;
     this.root = join(options.userDataPath, "materials");
     this.statePath = join(this.root, "state.json");
+    this.draftsPath = join(this.root, "drafts");
     this.handoffsPath = join(this.root, "handoffs");
     this.blobs = new MaterialBlobs(join(this.root, "versions"));
     this.storageLimit = options.storageLimitBytes ?? MATERIAL_STORAGE_LIMIT;
@@ -176,6 +187,7 @@ export class MaterialService {
     this.counters = state.counters;
     this.writable = true;
     const collected = await this.collect();
+    await this.loadDrafts();
     if (collected && !this.options.persist()) await rm(this.handoffsPath, { recursive: true, force: true }).catch(() => undefined);
     if (this.disposed) return;
     for (const material of this.materials.values()) {
@@ -338,6 +350,79 @@ export class MaterialService {
     });
   }
 
+  async readText(id: string, versionId: string | null): Promise<MaterialTextResult> {
+    const material = this.materials.get(id);
+    if (!material || material.kind !== "text") return failure("unavailable");
+    if (versionId === null && material.path !== null) {
+      const live = await this.readLiveText(material.path);
+      return live.ok ? { ok: true, content: live.content } : live;
+    }
+    const version = versionId === null
+      ? material.versions.at(-1)
+      : material.versions.find((candidate) => candidate.id === versionId);
+    if (!version) return failure("unavailable");
+    const read = await readBounded(this.blobs.pathOf(version.sha256), TEXT_EDIT_LIMIT);
+    if (!read.ok) return read;
+    const content = decodeText(read.bytes);
+    return content ? { ok: true, content: { ...content, editable: false } } : failure("not-text");
+  }
+
+  saveText(id: string, edit: unknown): Promise<MaterialSaveResult> {
+    return this.serial(async () => {
+      const material = this.materials.get(id);
+      if (!material || material.kind !== "text" || material.path === null) return failure("unavailable");
+      const parsed = parseTextEdit(edit);
+      if (!parsed) return failure(tooLargeEdit(edit) ? "too-large" : "unavailable");
+      const current = await this.readLiveText(material.path);
+      if (!current.ok) return current;
+      if (current.content.hash !== parsed.baseHash) return { ok: false, reason: "conflict", current: current.content };
+      if (!current.content.editable) return failure("read-only");
+      const bytes = encodeText(parsed.text, current.content.eol, current.content.bom);
+      if (bytes.length > TEXT_EDIT_LIMIT) return failure("too-large");
+      const next = decodeText(bytes);
+      if (!next) return failure("not-text");
+      if (next.hash === current.content.hash) {
+        if (this.dropDraft(id)) this.changed(false);
+        return { ok: true, content: current.content, previous: null };
+      }
+      const kept = await this.createVersion(id, "edit");
+      if (!kept.ok && !allowsUnversioned(edit)) return kept;
+      const latest = await this.readLiveText(material.path);
+      if (!latest.ok) return latest;
+      if (latest.content.hash !== parsed.baseHash) return { ok: false, reason: "conflict", current: latest.content };
+      try {
+        await replaceFile(material.path, bytes, latest.mode);
+      } catch {
+        return failure("write-failed");
+      }
+      this.dropDraft(id);
+      await this.refreshLive(material, true);
+      this.changed();
+      return { ok: true, content: next, previous: kept.ok ? kept.version : null };
+    });
+  }
+
+  readDraft(id: string): MaterialDraft | null {
+    const draft = this.drafts.get(id);
+    return draft ? { ...draft } : null;
+  }
+
+  writeDraft(id: string, edit: unknown): Promise<MaterialResult> {
+    const material = this.materials.get(id);
+    if (!material || material.kind !== "text" || material.path === null) return Promise.resolve(failure("unavailable"));
+    const parsed = parseTextEdit(edit);
+    if (!parsed) return Promise.resolve(failure(tooLargeEdit(edit) ? "too-large" : "unavailable"));
+    const previous = this.drafts.get(id);
+    this.drafts.set(id, { ...parsed, updatedAt: this.now() });
+    if (previous?.baseHash !== parsed.baseHash) this.changed(false);
+    return this.persistDraft(id);
+  }
+
+  discardDraft(id: string): void {
+    if (!this.materials.has(id)) return;
+    if (this.dropDraft(id)) this.changed(false);
+  }
+
   setBounds(id: string, bounds: unknown): void {
     if (!this.writable || this.disposed) return;
     const material = this.materials.get(id);
@@ -372,6 +457,7 @@ export class MaterialService {
       this.live.delete(id);
       this.pendingRefresh.delete(id);
       this.watchers.untrack(id);
+      this.dropDraft(id);
       await this.collect();
       this.changed();
     });
@@ -597,6 +683,8 @@ export class MaterialService {
       this.persistTimer = null;
     }
     await this.writeState(strict);
+    if (this.options.persist()) for (const id of this.drafts.keys()) await this.persistDraft(id);
+    await this.draftQueue;
   }
 
   dispose(): Promise<void> {
@@ -789,6 +877,7 @@ export class MaterialService {
       modifiedAt: live?.modifiedAt ?? null,
       origin: material.origin ? structuredClone(material.origin) : null,
       versions: material.versions.map((version) => this.publicVersion(material, version)),
+      draft: this.drafts.has(material.id) ? { baseHash: this.drafts.get(material.id)!.baseHash } : null,
       createdAt: material.createdAt
     };
   }
@@ -883,11 +972,77 @@ export class MaterialService {
       await mkdir(this.root, { recursive: true, mode: 0o700 });
       await writeFile(temporary, snapshot, { encoding: "utf8", mode: 0o600, flush: true });
       await rename(temporary, this.statePath);
+      if (!persist) await rm(this.draftsPath, { recursive: true, force: true });
     });
     this.writeQueue = write.catch((error) => {
       console.warn("CanvasTTY materials could not be saved.", error);
     });
     return strict ? write : this.writeQueue;
+  }
+
+  private async readLiveText(path: string): Promise<{ ok: true; content: MaterialText; mode: number } | { ok: false; reason: MaterialFailure }> {
+    let resolved: string;
+    try {
+      resolved = await realpath(path);
+    } catch {
+      return failure("unavailable");
+    }
+    if (resolved !== path) return failure("unreadable");
+    const read = await readBounded(resolved, TEXT_EDIT_LIMIT);
+    if (!read.ok) return read;
+    const content = decodeText(read.bytes);
+    return content ? { ok: true, content, mode: read.mode } : failure("not-text");
+  }
+
+  private async loadDrafts(): Promise<void> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.draftsPath);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const id = entry.endsWith(".json") ? entry.slice(0, -".json".length) : "";
+      const material = this.materials.get(id);
+      const file = join(this.draftsPath, entry);
+      const read = material?.kind === "text" && material.path !== null ? await readBounded(file, DRAFT_FILE_LIMIT) : null;
+      const value = read?.ok ? parseJson(read.bytes.toString("utf8")) : null;
+      const edit = parseTextEdit(value);
+      const updatedAt = (value as { updatedAt?: unknown } | null)?.updatedAt;
+      if (!edit || typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
+        await rm(file, { force: true }).catch(() => undefined);
+        continue;
+      }
+      this.drafts.set(id, { ...edit, updatedAt });
+    }
+  }
+
+  private persistDraft(id: string): Promise<MaterialResult> {
+    const draft = this.drafts.get(id);
+    if (!draft || !this.writable || !this.options.persist()) return Promise.resolve({ ok: true });
+    const file = join(this.draftsPath, `${id}.json`);
+    const snapshot = JSON.stringify(draft);
+    const write = this.draftQueue.catch(() => undefined).then(async (): Promise<MaterialResult> => {
+      if (this.drafts.get(id) !== draft) return { ok: true };
+      await mkdir(this.draftsPath, { recursive: true, mode: 0o700 });
+      const temporary = `${file}.tmp`;
+      await writeFile(temporary, snapshot, { encoding: "utf8", mode: 0o600, flush: true });
+      await rename(temporary, file);
+      return { ok: true };
+    }).catch((error): MaterialResult => {
+      console.warn("CanvasTTY could not save a text draft.", error);
+      return failure("write-failed");
+    });
+    this.draftQueue = write.then(() => undefined);
+    return write;
+  }
+
+  private dropDraft(id: string): boolean {
+    const existed = this.drafts.delete(id);
+    if (!isId(id) || !this.writable) return existed;
+    const file = join(this.draftsPath, `${id}.json`);
+    this.draftQueue = this.draftQueue.catch(() => undefined).then(() => rm(file, { force: true })).catch(() => undefined);
+    return existed;
   }
 
   private serial<T>(task: () => Promise<T>): Promise<T> {
@@ -1042,12 +1197,31 @@ function remarkTransitionAllowed(from: MaterialRemark["status"], to: NonNullable
   return from === "reopened";
 }
 
+function tooLargeEdit(edit: unknown): boolean {
+  const text = (edit as { text?: unknown } | null)?.text;
+  return typeof text === "string" && Buffer.byteLength(text, "utf8") > TEXT_EDIT_LIMIT;
+}
+
+function allowsUnversioned(edit: unknown): boolean {
+  return (edit as { allowUnversioned?: unknown } | null)?.allowUnversioned === true;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 function anchorFits(material: StoredMaterial, anchor: RemarkAnchor): boolean {
   switch (anchor.kind) {
     case "whole": return true;
+    case "lines": return material.kind === "text";
+    case "time": return material.kind === "video" || material.kind === "audio";
+    case "page": return material.kind === "pdf";
     case "region":
     case "point": return material.kind === "image";
-    default: return false;
   }
 }
 

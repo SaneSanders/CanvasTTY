@@ -16,6 +16,7 @@ import ellipsisIcon from "../assets/icons/lucide/ellipsis.svg";
 import fileIcon from "../assets/icons/lucide/file.svg";
 import fileSearchIcon from "../assets/icons/lucide/file-search.svg";
 import fileTextIcon from "../assets/icons/lucide/file-text.svg";
+import compareIcon from "../assets/icons/lucide/git-compare.svg";
 import filmIcon from "../assets/icons/lucide/film.svg";
 import imageIcon from "../assets/icons/lucide/image.svg";
 import messageSquarePlusIcon from "../assets/icons/lucide/message-square-plus.svg";
@@ -31,6 +32,7 @@ import pinIcon from "../assets/icons/lucide/pin.svg";
 import plusIcon from "../assets/icons/lucide/plus.svg";
 import paletteIcon from "../assets/icons/lucide/palette.svg";
 import pencilIcon from "../assets/icons/lucide/pencil.svg";
+import reopenIcon from "../assets/icons/lucide/rotate-ccw.svg";
 import searchIcon from "../assets/icons/lucide/search.svg";
 import sendIcon from "../assets/icons/lucide/send.svg";
 import settingsIcon from "../assets/icons/lucide/settings.svg";
@@ -68,6 +70,7 @@ export type UiIconName =
   | "plus"
   | "palette"
   | "pencil"
+  | "reopen"
   | "search"
   | "sticky-note"
   | "image-plus"
@@ -79,6 +82,7 @@ export type UiIconName =
   | "music"
   | "pin"
   | "crosshair"
+  | "compare"
   | "remark-add"
   | "folder-open"
   | "clipboard-paste"
@@ -121,6 +125,7 @@ const ICONS: Record<UiIconName, string> = {
   plus: plusIcon,
   palette: paletteIcon,
   pencil: pencilIcon,
+  reopen: reopenIcon,
   search: searchIcon,
   "sticky-note": stickyNoteIcon,
   "image-plus": imagePlusIcon,
@@ -132,6 +137,7 @@ const ICONS: Record<UiIconName, string> = {
   music: musicIcon,
   pin: pinIcon,
   crosshair: crosshairIcon,
+  compare: compareIcon,
   "remark-add": messageSquarePlusIcon,
   "folder-open": folderOpenIcon,
   "clipboard-paste": clipboardPasteIcon,

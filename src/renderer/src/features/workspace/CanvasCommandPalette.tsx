@@ -27,6 +27,10 @@ interface CanvasCommandPaletteProps {
   onCreateNote(): void;
   onAddFiles(): void;
   onPasteFiles(): void;
+  onCapturePage: (() => void) | null;
+  onToggleRecording: (() => void) | null;
+  recording: boolean;
+  onSendRemarks: (() => void) | null;
   onFitCanvas(): void;
   onOpenBrowser(): void;
   onOpenSettings(): void;
@@ -55,6 +59,10 @@ export function CanvasCommandPalette({
   onCreateNote,
   onAddFiles,
   onPasteFiles,
+  onCapturePage,
+  onToggleRecording,
+  recording,
+  onSendRemarks,
   onFitCanvas,
   onOpenBrowser,
   onOpenSettings,
@@ -138,6 +146,33 @@ export function CanvasCommandPalette({
       icon: "browser",
       run: onOpenBrowser
     },
+    ...(onCapturePage ? [{
+      id: "browser:capture" as const,
+      group: "actions" as const,
+      kind: "action" as const,
+      label: t(locale, "browserCapturePage"),
+      searchDetail: t(locale, "canvasMenuActions"),
+      icon: "camera" as const,
+      run: onCapturePage
+    }] : []),
+    ...(onToggleRecording ? [{
+      id: "browser:record" as const,
+      group: "actions" as const,
+      kind: "action" as const,
+      label: t(locale, recording ? "browserStopRecording" : "browserRecordScenario"),
+      searchDetail: t(locale, "canvasMenuActions"),
+      icon: "record" as const,
+      run: onToggleRecording
+    }] : []),
+    ...(onSendRemarks ? [{
+      id: "remarks:send" as const,
+      group: "actions" as const,
+      kind: "action" as const,
+      label: t(locale, "handoffSendToAgent"),
+      searchDetail: t(locale, "canvasMenuActions"),
+      icon: "send" as const,
+      run: () => { onSendRemarks(); onClose(); }
+    }] : []),
     {
       id: "open:settings",
       group: "actions",
@@ -148,8 +183,8 @@ export function CanvasCommandPalette({
       shortcut: window.canvasTTY.window.isMacOS ? "⌘," : "Ctrl+,",
       run: onOpenSettings
     }
-  ], [launcherItems, locale, onAddFiles, onCreateNote, onCreateRegion, onFitCanvas, onFocusSession, onLaunch, onOpenBrowser,
-    onOpenSettings, onPasteFiles, sessions]);
+  ], [launcherItems, locale, onAddFiles, onCapturePage, onClose, onCreateNote, onCreateRegion, onFitCanvas, onFocusSession, onLaunch,
+    onOpenBrowser, onOpenSettings, onPasteFiles, onSendRemarks, recording, sessions]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase(locale);
     if (!normalized) return commands;

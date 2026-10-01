@@ -21,6 +21,7 @@ import {
 } from "./materialCardModel";
 import { remarkNeedsWork, type MaterialRemarkActions, type MaterialRemarking } from "./materialRemarksModel";
 import { RemarkChips } from "./RemarkChips";
+import { ScenarioBody, type ScenarioControls } from "./ScenarioBody";
 import { TextMaterialBody } from "./TextMaterialBody";
 
 interface MaterialCardProps {
@@ -34,6 +35,7 @@ interface MaterialCardProps {
   removeRequest: number;
   remarking: MaterialRemarking;
   remarkActions: MaterialRemarkActions;
+  scenarioControls: ScenarioControls;
   onBoundsChange(id: string, bounds: SessionBounds): void;
   onRemove(id: string): void;
   onOpenMenu(id: string, client: Point): void;
@@ -63,6 +65,7 @@ export function MaterialCard({
   removeRequest,
   remarking,
   remarkActions,
+  scenarioControls,
   onBoundsChange,
   onRemove,
   onOpenMenu,
@@ -218,6 +221,7 @@ export function MaterialCard({
       remarkActions.cancel();
       return;
     }
+    setEditing(false);
     remarkActions.start(material.id, remarkDrawable(material) ? null : { kind: "whole" });
   };
 
@@ -288,7 +292,7 @@ export function MaterialCard({
               <UiIcon name="pencil" size="1.1em" />
             </button>
           )}
-          {remarkAddable() && remarkDrawable(material) && (
+          {remarkAddable(material) && remarkDrawable(material) && (
             <button
               type="button"
               className={drawing ? "material-card__active" : ""}
@@ -349,7 +353,7 @@ export function MaterialCard({
           <MaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions}
             staleVersionIds={staleVersionIds} editing={editing} onEditingChange={setEditing} onTextReadable={setTextReadable}
             onPendingText={(pending) => { pendingText.current = pending; }}
-            onAction={onAction} />
+            scenarioControls={scenarioControls} onAction={onAction} />
         )}
       </div>
       <div className="material-card__summary" aria-hidden={!summaryMode}>
@@ -384,6 +388,7 @@ function MaterialBody({
   onEditingChange,
   onTextReadable,
   onPendingText,
+  scenarioControls,
   onAction
 }: {
   material: CanvasMaterial;
@@ -395,6 +400,7 @@ function MaterialBody({
   onEditingChange(editing: boolean): void;
   onTextReadable(readable: boolean): void;
   onPendingText(pending: boolean): void;
+  scenarioControls: ScenarioControls;
   onAction(id: string, action: MaterialCommand): void;
 }): React.JSX.Element {
   const [failed, setFailed] = useState(false);
@@ -464,6 +470,9 @@ function MaterialBody({
       </div>
     );
   }
+  if (material.kind === "scenario" && material.scenario) {
+    return <ScenarioBody material={material} locale={locale} controls={scenarioControls} remarking={remarking} remarkActions={remarkActions} />;
+  }
   if (material.kind === "text") {
     return (
       <TextMaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions}
@@ -505,13 +514,14 @@ export function MaterialNotice({
 }
 
 function materialKindLabel(kind: CanvasMaterial["kind"]): "materialKindImage" | "materialKindText" | "materialKindVideo"
-  | "materialKindAudio" | "materialKindPdf" | "materialKindFile" {
+  | "materialKindAudio" | "materialKindPdf" | "materialKindFile" | "materialKindScenario" {
   switch (kind) {
     case "image": return "materialKindImage";
     case "text": return "materialKindText";
     case "video": return "materialKindVideo";
     case "audio": return "materialKindAudio";
     case "pdf": return "materialKindPdf";
+    case "scenario": return "materialKindScenario";
     default: return "materialKindFile";
   }
 }

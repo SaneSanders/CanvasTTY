@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { BUNDLED_CANVAS_BACKGROUND_IDS } from "../../../../shared/contracts";
+import { materialCardSize, spotBeside } from "../../../../shared/materials";
 import type {
   AgentProviderId,
   AgentChatHistoryItem,
@@ -41,7 +42,9 @@ import { sessionStatusTone } from "../../lib/sessionStatusTone";
 import { RadialLauncher } from "../launcher/QuickRadialMenu";
 import { StickyNoteCard } from "../notes/StickyNoteCard";
 const MaterialCard = lazy(() => import("../materials/MaterialCard").then((module) => ({ default: module.MaterialCard })));
-import { remarkDrawable, remarkPickable, type MaterialCommand } from "../materials/materialCardModel";
+import type { ScenarioControls } from "../materials/ScenarioBody";
+import { useScenarioRecorder, type RecorderNotice } from "../materials/useScenarioRecorder";
+import { remarkAddable, remarkDrawable, remarkPickable, type MaterialCommand } from "../materials/materialCardModel";
 import { remarkNeedsWork } from "../materials/materialRemarksModel";
 import { RemarkPopover } from "../materials/RemarkPopover";
 import { useRemarkDraft } from "../materials/useRemarkDraft";
@@ -254,6 +257,7 @@ interface WorkspaceCanvasProps {
   onRemarkAction(remarkId: string, action: "delete"): void;
   onSendMaterialRemarks(materialId: string): void;
   onSendAllRemarks(): void;
+  onRecorderNotice(notice: RecorderNotice): void;
 }
 
 export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element {
@@ -272,7 +276,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
     onStickyNoteBoundsChange, onStickyNoteTextChange, onDeleteStickyNote,
     materials, onAddMaterialFiles, onPickMaterials, onPasteMaterials, onMaterialBoundsChange,
     onMaterialBoundsChangeBatch, onRemoveMaterial, onMaterialCommand, remarks, handoffs, onAddRemark, onRemarkAction,
-    onSendMaterialRemarks, onSendAllRemarks, surfacesMounted = true
+    onSendMaterialRemarks, onSendAllRemarks, onRecorderNotice, surfacesMounted = true
   } = props;
   const viewport = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<CanvasMenuState | null>(null);
@@ -446,7 +450,10 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
     ...renderedPluginCanvas
       .filter((instance) => renderablePluginIds.has(instance.id))
       .map((instance) => ({ id: pluginCanvasWidgetId(instance.id), bounds: instance })),
-    ...(renderedBrowserCanvas ? [{ id: browserCanvasWidgetId, bounds: renderedBrowserCanvas }] : [])
+    ...(renderedBrowserCanvas ? [{ id: browserCanvasWidgetId, bounds: renderedBrowserCanvas }] : []),
+    ...renderedMaterials
+      .filter((material) => material.kind === "text" || material.kind === "scenario")
+      .map((material) => ({ id: materialLayerId(material.id), bounds: material }))
   ];
 
   const homeBounds = useMemo((): SessionBounds => ({
@@ -608,6 +615,46 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
   ]);
   const browserOccluded = renderedBrowserCanvas !== null
     && canvasLayerIsOccluded(browserLayerId, layerOrder, boundsByLayer);
+  const recorderZoom = useCameraSelector(camera, (current) => current.zoom);
+  const recorder = useScenarioRecorder(recorderZoom, onRecorderNotice);
+  const browserOpen = browser.visible && browser.activeTabId !== null && renderedBrowserCanvas !== null;
+  const besideBrowser = (): Point => {
+    const rect = viewport.current?.getBoundingClientRect();
+    const scene = camera.get();
+    const visible = rect
+      ? { position: { x: -scene.x / scene.zoom, y: -scene.y / scene.zoom }, size: { width: rect.width / scene.zoom, height: rect.height / scene.zoom } }
+      : null;
+    return renderedBrowserCanvas
+      ? spotBeside(renderedBrowserCanvas, materialCardSize("scenario", null), materials, visible)
+      : viewportCenterWorldPoint();
+  };
+  const capturePage = browserOpen ? (): void => {
+    setContextMenu(null);
+    setCommandPaletteOpen(false);
+    void recorder.capture(besideBrowser()).then((captured) => {
+      if (captured) onRecorderNotice("captured");
+    });
+  } : null;
+  const toggleRecording = browserOpen || recorder.recordingId ? (): void => {
+    setContextMenu(null);
+    setCommandPaletteOpen(false);
+    if (recorder.recordingId) {
+      void recorder.stop();
+      return;
+    }
+    void recorder.start(besideBrowser()).then((started) => {
+      if (started) onRecorderNotice("recording-started");
+    });
+  } : null;
+  const scenarioControls = useMemo<ScenarioControls>(() => ({
+    recordingId: recorder.recordingId,
+    stop: (materialId) => void recorder.stop(materialId),
+    expect: recorder.expect
+  }), [recorder]);
+  const removeMaterial = (id: string): void => {
+    if (id === recorder.recordingId) void recorder.stop(id);
+    onRemoveMaterial(id);
+  };
   const selectedRemark = selectedRemarkId ? remarks.find((remark) => remark.id === selectedRemarkId) ?? null : null;
   const popoverMaterial = remarkDraft
     ? renderedMaterials.find((material) => material.id === remarkDraft.materialId) ?? null
@@ -892,8 +939,14 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
       onFocusBrowser();
       return;
     }
+    const material = renderedMaterials.find((candidate) => materialLayerId(candidate.id) === target);
+    if (material) {
+      raiseLayer(materialLayerId(material.id));
+      focusController.focus(target, "explicit");
+      return;
+    }
   }, [focusCandidates, focusController, onFocusBrowser, onFocusPluginCanvas, onFocusSession,
-    renderedBrowserCanvas, renderedPluginCanvas, renderedSessions, raiseLayer, viewportCenterWorldPoint]);
+    renderedBrowserCanvas, renderedMaterials, renderedPluginCanvas, renderedSessions, raiseLayer, viewportCenterWorldPoint]);
 
   const fitCanvasRef = useRef(fitCanvas);
   fitCanvasRef.current = fitCanvas;
@@ -1259,8 +1312,9 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
               removeRequest={materialRemoveRequest?.id === material.id ? materialRemoveRequest.version : 0}
               remarking={remarkingFor(material)}
               remarkActions={remarkActions}
+              scenarioControls={scenarioControls}
               onBoundsChange={onMaterialBoundsChange}
-              onRemove={onRemoveMaterial}
+              onRemove={removeMaterial}
               onOpenMenu={openMaterialMenu}
               onAction={onMaterialCommand}
             />
@@ -1394,10 +1448,22 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
           materialHasLocation={Boolean(materials.find((material) => material.id === contextMenu.targetId)?.location)}
           onAddFiles={() => pickMaterialsAt(contextMenu.worldPoint)}
           onPasteFiles={() => pasteMaterialsAt(contextMenu.worldPoint)}
+          onCapturePage={capturePage}
+          onToggleRecording={toggleRecording}
+          recording={recorder.recordingId !== null}
           onPinMaterial={() => {
             if (contextMenu.targetId) onMaterialCommand(contextMenu.targetId, "pin");
             setContextMenu(null);
           }}
+          onAddRemark={(() => {
+            const material = materials.find((candidate) => candidate.id === contextMenu.targetId);
+            if (!material || !remarkAddable(material)) return null;
+            return () => {
+              raiseLayer(materialLayerId(material.id));
+              remarkActions.start(material.id, remarkDrawable(material) ? null : { kind: "whole" });
+              setContextMenu(null);
+            };
+          })()}
           onSendMaterial={remarks.some((remark) => remark.target.materialId === contextMenu.targetId && remarkNeedsWork(remark)) ? () => {
             if (contextMenu.targetId) onSendMaterialRemarks(contextMenu.targetId);
             setContextMenu(null);
@@ -1481,6 +1547,13 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
           onCreateNote={() => createNote(viewportCenterWorldPoint())}
           onAddFiles={() => pickMaterialsAt(viewportCenterWorldPoint())}
           onPasteFiles={() => pasteMaterialsAt(viewportCenterWorldPoint())}
+          onCapturePage={capturePage}
+          onToggleRecording={toggleRecording}
+          recording={recorder.recordingId !== null}
+          onSendRemarks={remarks.some((remark) => remarkNeedsWork(remark)) ? () => {
+            setCommandPaletteOpen(false);
+            onSendAllRemarks();
+          } : null}
           onFitCanvas={fitCanvas}
           onOpenBrowser={() => onOpenBrowser(viewportCenterWorldPoint())}
           onOpenSettings={onOpenSettings}

@@ -15,11 +15,12 @@ import type {
   MaterialResult,
   MaterialsAddResult,
   MaterialsSnapshot,
+  MaterialSaveResult,
+  MaterialScenario,
   MaterialState,
   MaterialText,
   MaterialTextEdit,
   MaterialTextResult,
-  MaterialSaveResult,
   MaterialVersion,
   MaterialVersionReason,
   MaterialVersionResult,
@@ -29,11 +30,15 @@ import type {
   RemarkPatch,
   RemarkResult,
   RemarkTarget,
+  ScenarioStep,
+  ScenarioStopReason,
   SessionBounds,
   Size
 } from "../../../shared/contracts";
 import {
   clampSize,
+  formatClock,
+  freeSpotBelow,
   MATERIAL_LIMIT,
   MATERIAL_SCHEME,
   MATERIAL_STORAGE_LIMIT,
@@ -42,12 +47,15 @@ import {
   materialCardSize,
   materialsAtPoint,
   materialType,
-  REMARK_TEXT_LIMIT
+  REMARK_TEXT_LIMIT,
+  SCENARIO_STEP_LIMIT,
+  SCENARIO_TIME_LIMIT_MS
 } from "../../../shared/materials.ts";
 import { streamFile, textResponse } from "../fileResponse.ts";
 import { IMAGE_HEADER_BYTES, imageDimensions } from "./imageDimensions.ts";
 import { fileDigest, MaterialBlobError, MaterialBlobs } from "./MaterialBlobs.ts";
 import { decodeText, encodeText, parseTextEdit, readBounded, replaceFile, TEXT_EDIT_LIMIT } from "./materialText.ts";
+import { PAGE_SHOT_MAX_BYTES, parseCaptureInput, parseStartInput, parseStepInput } from "./pageCapture.ts";
 import {
   emptyMaterialState,
   HANDOFF_LIMIT,
@@ -59,11 +67,13 @@ import {
   type StoredFileIdentity,
   type StoredMaterial,
   type StoredMaterialState,
+  type StoredScenario,
   type StoredVersion
 } from "./materialState.ts";
 import { DirectoryWatchSet, nodeWatchFactory, type WatchFactory } from "./materialWatch.ts";
 
 const MAX_NAME = 255;
+const CAPTURE_NAME_STEM_LIMIT = 120;
 const MATERIAL_CAPTURE_MAX_BYTES = 32 * 1024 * 1024;
 const PERSIST_DELAY_MS = 250;
 const REFRESH_DELAY_MS = 150;
@@ -82,6 +92,7 @@ interface MaterialServiceOptions {
   watchFactory?: WatchFactory;
   now?(): number;
   pollIntervalMs?: number;
+  scenarioLimitMs?: number;
   storageLimitBytes?: number;
 }
 
@@ -97,6 +108,7 @@ export interface MaterialVersionFile {
   natural: Size | null;
   location: string | null;
   origin: MaterialOrigin | null;
+  steps: Array<ScenarioStep & { imagePath: string | null; imageMimeType: string | null; imageByteSize: number | null }> | null;
 }
 
 interface MaterialCaptureInput {
@@ -146,6 +158,7 @@ export class MaterialService {
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private scenarioTimer: ReturnType<typeof setTimeout> | null = null;
   private loading: Promise<void> | null = null;
   private writable = false;
   private collecting = false;
@@ -175,8 +188,11 @@ export class MaterialService {
       const versions: StoredVersion[] = [];
       for (const version of material.versions) if (await this.blobs.has(version.sha256)) versions.push(version);
       material.versions = versions;
+      for (const step of material.scenario?.steps ?? []) {
+        if (step.image && !await this.blobs.has(step.image.sha256)) step.image = null;
+      }
       if (this.disposed) return;
-      if (material.path === null && versions.length === 0) continue;
+      if (material.path === null && versions.length === 0 && !material.scenario) continue;
       this.materials.set(material.id, material);
     }
     this.remarks = state.remarks
@@ -186,6 +202,9 @@ export class MaterialService {
     this.counters = state.counters;
     this.writable = read.writable;
     this.collecting = read.collecting;
+    for (const material of this.materials.values()) {
+      if (material.scenario && material.versions.length === 0) await this.sealScenario(material).catch(() => undefined);
+    }
     await this.collect();
     if (this.collecting) await this.loadDrafts();
     if (this.writable && !this.options.persist()) await rm(this.handoffsPath, { recursive: true, force: true }).catch(() => undefined);
@@ -203,6 +222,7 @@ export class MaterialService {
       }, interval);
       this.pollTimer.unref?.();
     }
+    this.scheduleScenarioLimit();
     this.changed(false);
   }
 
@@ -272,7 +292,8 @@ export class MaterialService {
           origin: origin ? structuredClone(origin) : null,
           createdAt: this.now(),
           versions: [],
-          nextVersion: 1
+          nextVersion: 1,
+          scenario: null
         };
         fresh.push(material);
         infos.set(material.id, info);
@@ -333,12 +354,104 @@ export class MaterialService {
           signature: blob.sha256,
           natural: type.kind === "image" ? input.natural ?? null : null
         }],
-        nextVersion: 2
+        nextVersion: 2,
+        scenario: null
       };
       this.materials.set(material.id, material);
       await this.refreshLive(material);
       this.changed();
       return { ok: true, materialId: material.id };
+    });
+  }
+
+  captureBrowser(input: unknown): Promise<MaterialCreateResult> {
+    const parsed = parseCaptureInput(input);
+    if (!parsed) return Promise.resolve(failure("unreadable"));
+    const host = new URL(parsed.url).host;
+    return this.addCapture({
+      bytes: parsed.shot.bytes,
+      name: captureName(parsed.title, host, parsed.shot.mimeType === "image/png" ? "png" : "jpg"),
+      mimeType: parsed.shot.mimeType,
+      origin: { kind: "browser", url: parsed.url, title: parsed.title, viewport: parsed.viewport, elements: parsed.elements },
+      point: parsed.point,
+      natural: parsed.shot.natural
+    });
+  }
+
+  startScenario(input: unknown): Promise<MaterialCreateResult> {
+    return this.serial(async () => {
+      const parsed = parseStartInput(input);
+      if (!parsed) return failure("unreadable");
+      if (this.materials.size >= MATERIAL_LIMIT) return failure("material-limit");
+      const size = materialCardSize("scenario", null);
+      const [placed] = materialsAtPoint([size], finitePoint(parsed.point));
+      const material: StoredMaterial = {
+        id: randomUUID(),
+        kind: "scenario",
+        name: captureName(parsed.title, new URL(parsed.url).host, "scenario.json"),
+        mimeType: "application/json",
+        position: placed.position,
+        size,
+        path: null,
+        identity: null,
+        origin: { kind: "browser", url: parsed.url, title: parsed.title, viewport: parsed.viewport, elements: [] },
+        createdAt: this.now(),
+        versions: [],
+        nextVersion: 1,
+        scenario: { state: "recording", startedAt: this.now(), endedAt: null, viewport: parsed.viewport, stopReason: null, steps: [] }
+      };
+      this.materials.set(material.id, material);
+      await this.refreshLive(material);
+      this.scheduleScenarioLimit();
+      this.changed();
+      return { ok: true, materialId: material.id };
+    });
+  }
+
+  addScenarioStep(id: string, input: unknown): Promise<MaterialResult> {
+    return this.serial(async () => {
+      const material = this.materials.get(id);
+      const scenario = material?.scenario;
+      if (!material || !scenario || scenario.state !== "recording") return failure("unavailable");
+      if (this.now() - scenario.startedAt > this.scenarioLimit()) {
+        await this.finishScenario(material, "limit");
+        return failure("unavailable");
+      }
+      const step = parseStepInput(input);
+      if (!step) return failure("unreadable");
+      let image = null;
+      if (step.shot) {
+        try {
+          const blob = await this.blobs.writeFromBytes(step.shot.bytes, PAGE_SHOT_MAX_BYTES, this.available());
+          image = { sha256: blob.sha256, byteSize: blob.byteSize, mimeType: step.shot.mimeType, natural: step.shot.natural };
+        } catch (error) {
+          if (!(error instanceof MaterialBlobError) || error.code === "unreadable") return failure("unreadable");
+        }
+      }
+      scenario.steps.push({
+        index: scenario.steps.length,
+        kind: step.kind,
+        at: this.now(),
+        url: step.url,
+        title: step.title,
+        point: step.point,
+        element: step.element,
+        text: step.text,
+        image
+      });
+      if (scenario.steps.length >= SCENARIO_STEP_LIMIT) await this.finishScenario(material, "limit");
+      this.changed();
+      return { ok: true };
+    });
+  }
+
+  stopScenario(id: string, reason: unknown): Promise<MaterialResult> {
+    return this.serial(async () => {
+      const material = this.materials.get(id);
+      if (!material?.scenario) return failure("unavailable");
+      const result = await this.finishScenario(material, reason === "limit" || reason === "browser-closed" ? reason : "stopped");
+      this.changed();
+      return result;
     });
   }
 
@@ -566,7 +679,13 @@ export class MaterialService {
       byteSize: version.byteSize,
       natural: version.natural,
       location: material.path,
-      origin: material.origin ? structuredClone(material.origin) : null
+      origin: material.origin ? structuredClone(material.origin) : null,
+      steps: material.scenario ? material.scenario.steps.map((step) => ({
+        ...publicScenario({ ...material.scenario!, steps: [step] }).steps[0],
+        imagePath: step.image ? this.blobs.pathOf(step.image.sha256) : null,
+        imageMimeType: step.image?.mimeType ?? null,
+        imageByteSize: step.image?.byteSize ?? null
+      })) : null
     };
   }
 
@@ -671,6 +790,12 @@ export class MaterialService {
         if (resolved !== material.path || !info.isFile()) return textResponse("Material is unavailable.", 404);
         return await streamFile(request, resolved, material.mimeType, RESPONSE_HEADERS);
       }
+      if (parts[0] === "step" && parts.length === 2 && material.scenario) {
+        const image = material.scenario.steps[Number(parts[1])]?.image;
+        return image
+          ? await streamFile(request, this.blobs.pathOf(image.sha256), image.mimeType, RESPONSE_HEADERS)
+          : textResponse("Step is unavailable.", 404);
+      }
       if (parts[0] === "v" && parts.length === 2) {
         const version = material.versions.find((candidate) => candidate.id === parts[1]);
         return version ? await this.streamVersion(request, version) : textResponse("Version is unavailable.", 404);
@@ -695,6 +820,7 @@ export class MaterialService {
     this.disposed = true;
     if (this.pollTimer !== null) clearInterval(this.pollTimer);
     if (this.refreshTimer !== null) clearTimeout(this.refreshTimer);
+    if (this.scenarioTimer !== null) clearTimeout(this.scenarioTimer);
     this.watchers.close();
     await this.loading?.catch(() => undefined);
     await this.queue;
@@ -710,6 +836,11 @@ export class MaterialService {
     if (!material) return failure("unavailable");
     const latest = material.versions.at(-1);
     if (material.path === null) {
+      if (!latest && material.scenario?.state === "done") {
+        const sealed = await this.finishScenario(material, material.scenario.stopReason ?? "stopped");
+        if (!sealed.ok) return sealed;
+        this.changed();
+      }
       const kept = material.versions.at(-1);
       return kept ? { ok: true, version: this.publicVersion(material, kept) } : failure("unavailable");
     }
@@ -808,7 +939,7 @@ export class MaterialService {
   private async versionable(id: string): Promise<boolean> {
     const material = this.materials.get(id);
     if (!material) return false;
-    if (material.path === null) return material.versions.length > 0;
+    if (material.path === null) return material.versions.length > 0 || material.scenario?.state === "done";
     await this.refreshLive(material);
     return this.live.get(id)?.state === "ready";
   }
@@ -878,6 +1009,7 @@ export class MaterialService {
       origin: material.origin ? structuredClone(material.origin) : null,
       versions: material.versions.map((version) => this.publicVersion(material, version)),
       draft: this.drafts.has(material.id) ? { baseHash: this.drafts.get(material.id)!.baseHash } : null,
+      scenario: material.scenario ? publicScenario(material.scenario) : null,
       createdAt: material.createdAt
     };
   }
@@ -947,6 +1079,7 @@ export class MaterialService {
     const hashes = new Set<string>();
     for (const material of this.materials.values()) {
       for (const version of material.versions) hashes.add(version.sha256);
+      for (const step of material.scenario?.steps ?? []) if (step.image) hashes.add(step.image.sha256);
     }
     return hashes;
   }
@@ -955,6 +1088,7 @@ export class MaterialService {
     const sizes = new Map<string, number>();
     for (const material of this.materials.values()) {
       for (const version of material.versions) sizes.set(version.sha256, version.byteSize);
+      for (const step of material.scenario?.steps ?? []) if (step.image) sizes.set(step.image.sha256, step.image.byteSize);
     }
     let total = 0;
     for (const size of sizes.values()) total += size;
@@ -963,6 +1097,83 @@ export class MaterialService {
 
   private available(): number {
     return Math.max(0, this.storageLimit - this.usedBytes());
+  }
+
+  private scheduleScenarioLimit(): void {
+    if (this.scenarioTimer !== null) {
+      clearTimeout(this.scenarioTimer);
+      this.scenarioTimer = null;
+    }
+    if (this.disposed) return;
+    let soonest = Infinity;
+    for (const material of this.materials.values()) {
+      if (material.scenario?.state === "recording") soonest = Math.min(soonest, material.scenario.startedAt + this.scenarioLimit());
+    }
+    if (!Number.isFinite(soonest)) return;
+    this.scenarioTimer = setTimeout(() => {
+      this.scenarioTimer = null;
+      void this.serial(async () => {
+        let finished = false;
+        for (const material of this.materials.values()) {
+          if (material.scenario?.state === "recording" && this.now() - material.scenario.startedAt >= this.scenarioLimit()) {
+            await this.finishScenario(material, "limit");
+            finished = true;
+          }
+        }
+        if (finished) this.changed();
+        this.scheduleScenarioLimit();
+      });
+    }, Math.max(0, soonest - this.now()));
+    this.scenarioTimer.unref?.();
+  }
+
+  private scenarioLimit(): number {
+    return this.options.scenarioLimitMs ?? SCENARIO_TIME_LIMIT_MS;
+  }
+
+  private async finishScenario(material: StoredMaterial, reason: ScenarioStopReason): Promise<MaterialResult> {
+    const scenario = material.scenario!;
+    if (scenario.state === "recording") {
+      scenario.state = "done";
+      scenario.endedAt = this.now();
+      scenario.stopReason = reason;
+      this.scheduleScenarioLimit();
+    }
+    if (material.versions.length > 0) return { ok: true };
+    try {
+      await this.sealScenario(material);
+      return { ok: true };
+    } catch (error) {
+      return failure(blobFailure(error));
+    }
+  }
+
+  private async sealScenario(material: StoredMaterial): Promise<void> {
+    const scenario = material.scenario!;
+    const document = {
+      kind: "canvastty-scenario",
+      url: material.origin?.kind === "browser" ? material.origin.url : null,
+      startedAt: scenario.startedAt,
+      endedAt: scenario.endedAt,
+      viewport: scenario.viewport,
+      stopReason: scenario.stopReason,
+      steps: scenario.steps.map((step) => ({ ...step, image: step.image ? { sha256: step.image.sha256, natural: step.image.natural } : null }))
+    };
+    const blob = await this.blobs.writeFromBytes(Buffer.from(JSON.stringify(document, null, 2), "utf8"), MATERIAL_CAPTURE_MAX_BYTES, this.available());
+    const createdAt = this.now();
+    material.versions.push({
+      id: randomUUID(),
+      number: material.nextVersion,
+      sha256: blob.sha256,
+      byteSize: blob.byteSize,
+      mimeType: "application/json",
+      createdAt,
+      reason: "capture",
+      signature: blob.sha256,
+      natural: null
+    });
+    material.nextVersion += 1;
+    await this.refreshLive(material, true);
   }
 
   private changed(persist = true): void {
@@ -1101,7 +1312,7 @@ type InspectedLive = LiveState & { identity?: StoredFileIdentity };
 function captureLive(material: StoredMaterial): InspectedLive {
   const latest = material.versions.at(-1);
   return {
-    state: latest ? "ready" : "unreadable",
+    state: latest || material.scenario ? "ready" : "unreadable",
     signature: latest?.sha256 ?? null,
     byteSize: latest?.byteSize ?? null,
     modifiedAt: latest?.createdAt ?? null,
@@ -1259,6 +1470,7 @@ function anchorFits(material: StoredMaterial, anchor: RemarkAnchor): boolean {
     case "lines": return material.kind === "text";
     case "time": return material.kind === "video" || material.kind === "audio";
     case "page": return material.kind === "pdf";
+    case "step": return material.scenario !== null && anchor.index < material.scenario.steps.length;
     case "region":
     case "point": return material.kind === "image";
   }
@@ -1280,7 +1492,26 @@ function displayName(path: string): string {
   return (basename(path) || "file").slice(0, MAX_NAME);
 }
 
+function captureName(title: string, fallback: string, extension: string): string {
+  const stem = title.replace(/[\\/\u0000-\u001f\u007f]+/g, " ").trim() || fallback;
+  return `${stem.slice(0, CAPTURE_NAME_STEM_LIMIT)}.${extension}`;
+}
 
+function publicScenario(scenario: StoredScenario): MaterialScenario {
+  return {
+    state: scenario.state,
+    startedAt: scenario.startedAt,
+    endedAt: scenario.endedAt,
+    viewport: scenario.viewport ? { ...scenario.viewport } : null,
+    stopReason: scenario.stopReason,
+    steps: scenario.steps.map((step) => ({
+      ...step,
+      point: step.point ? { ...step.point } : null,
+      element: step.element ? { ...step.element } : null,
+      image: step.image ? { natural: { ...step.image.natural } } : null
+    }))
+  };
+}
 
 function isBounds(value: unknown): value is SessionBounds {
   if (!value || typeof value !== "object") return false;

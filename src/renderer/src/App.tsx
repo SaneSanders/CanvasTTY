@@ -96,6 +96,7 @@ import {
   type MaterialCommand
 } from "./features/materials/materialCardModel";
 import { remarkNeedsWork } from "./features/materials/materialRemarksModel";
+import type { RecorderNotice } from "./features/materials/useScenarioRecorder";
 
 interface HomeEditDraft {
   homeGridSize: HomeGridSize;
@@ -913,6 +914,14 @@ export function App(): React.JSX.Element {
     showToast(t(settingsRef.current.locale, "materialsFailed"));
   }, [showToast]);
 
+  const reportRecorderNotice = useCallback((notice: RecorderNotice): void => {
+    const locale = settingsRef.current.locale;
+    if (notice === "captured") showToast(t(locale, "browserPageCaptured"));
+    else if (notice === "recording-started") showToast(t(locale, "browserRecordingStarted"));
+    else if (notice === "browser-unavailable") showToast(t(locale, "browserPageUnavailable"));
+    else showToast(t(locale, materialFailureKey(notice) ?? "materialsFailed"));
+  }, [showToast]);
+
   const addMaterialFiles = useCallback((files: File[], point: Point): void => {
     void materials.addFiles(files, point).then(reportMaterialsAdded, reportMaterialsFailure);
   }, [materials, reportMaterialsAdded, reportMaterialsFailure]);
@@ -1623,6 +1632,7 @@ export function App(): React.JSX.Element {
           onRemarkAction={remarkAction}
           onSendMaterialRemarks={sendMaterialRemarks}
           onSendAllRemarks={sendAllRemarks}
+          onRecorderNotice={reportRecorderNotice}
         />}
       </main>
 

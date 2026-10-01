@@ -6,12 +6,17 @@ import type {
   MaterialKind,
   MaterialOrigin,
   MaterialRemark,
+  MaterialScenario,
   MaterialVersionReason,
+  PageElement,
   Point,
   ProviderId,
   RemarkAnchor,
   RemarkStatus,
   RemarkTarget,
+  ScenarioStep,
+  ScenarioStepKind,
+  ScenarioStopReason,
   Size
 } from "../../../shared/contracts";
 import {
@@ -19,7 +24,10 @@ import {
   HANDOFF_NOTE_LIMIT,
   MATERIAL_LIMIT,
   MATERIAL_VERSION_LIMIT,
-  REMARK_TEXT_LIMIT
+  PAGE_ELEMENT_LIMIT,
+  REMARK_TEXT_LIMIT,
+  SCENARIO_STEP_LIMIT,
+  SCENARIO_TEXT_LIMIT
 } from "../../../shared/materials.ts";
 
 export const MATERIAL_STATE_VERSION = 1;
@@ -27,7 +35,10 @@ export const REMARK_LIMIT = 2_000;
 export const HANDOFF_LIMIT = 200;
 export const HANDOFF_REMARK_LIMIT = 50;
 
-const KINDS: Record<MaterialKind, true> = { image: true, text: true, video: true, audio: true, pdf: true, file: true };
+const KINDS: Record<MaterialKind, true> = { image: true, text: true, video: true, audio: true, pdf: true, file: true, scenario: true };
+export const STEP_KINDS: ReadonlySet<ScenarioStepKind> = new Set(["start", "click", "navigate", "expectation", "tab-left", "tab-returned"]);
+const STOP_REASONS: ReadonlySet<ScenarioStopReason> = new Set(["stopped", "limit", "browser-closed", "app-closed"]);
+const IMAGE_MIME: ReadonlySet<string> = new Set(["image/png", "image/jpeg"]);
 const VERSION_REASONS: ReadonlySet<MaterialVersionReason> = new Set(["pinned", "remark", "capture", "edit"]);
 const REMARK_STATUSES: ReadonlySet<RemarkStatus> = new Set(["open", "sent", "reported", "accepted", "reopened"]);
 const DELIVERY_STATES: ReadonlySet<HandoffDeliveryState> = new Set(["sending", "submitted", "pasted", "failed"]);
@@ -77,6 +88,22 @@ export interface StoredMaterial {
   createdAt: number;
   versions: StoredVersion[];
   nextVersion: number;
+  scenario: StoredScenario | null;
+}
+
+export interface StoredStepImage {
+  sha256: string;
+  byteSize: number;
+  mimeType: string;
+  natural: Size;
+}
+
+export interface StoredScenarioStep extends Omit<ScenarioStep, "image"> {
+  image: StoredStepImage | null;
+}
+
+export interface StoredScenario extends Omit<MaterialScenario, "steps"> {
+  steps: StoredScenarioStep[];
 }
 
 export interface StoredMaterialState {
@@ -142,6 +169,9 @@ export function normalizeAnchor(value: unknown): RemarkAnchor | null {
     return { kind: "region", x: value.x, y: value.y, width: value.width, height: value.height };
   }
   if (value.kind === "page" && isPageNumber(value.page)) return { kind: "page", page: value.page };
+  if (value.kind === "step" && Number.isSafeInteger(value.index) && (value.index as number) >= 0 && (value.index as number) < SCENARIO_STEP_LIMIT) {
+    return { kind: "step", index: value.index as number };
+  }
   if (value.kind === "time" && isMediaTime(value.start) && (value.end === null || (isMediaTime(value.end) && value.end > value.start))) {
     return { kind: "time", start: value.start, end: value.end };
   }
@@ -251,7 +281,7 @@ function isUnit(value: unknown): value is number {
 
 function normalizeMaterial(value: unknown): StoredMaterial | null {
   if (!isRecord(value)) return null;
-  const { id, kind, name, mimeType, position, size, path, identity, origin, createdAt, versions, nextVersion } = value;
+  const { id, kind, name, mimeType, position, size, path, identity, origin, createdAt, versions, nextVersion, scenario } = value;
   if (!isId(id)) return null;
   if (typeof kind !== "string" || !(kind in KINDS)) return null;
   if (typeof name !== "string" || name.length === 0 || name.length > MAX_NAME) return null;
@@ -260,7 +290,9 @@ function normalizeMaterial(value: unknown): StoredMaterial | null {
   if (path !== null && (typeof path !== "string" || !isAbsolute(path) || path.includes("\0"))) return null;
   if (!isFiniteNumber(createdAt)) return null;
   const storedVersions = normalizeVersions(versions);
-  if (path === null && storedVersions.length === 0) return null;
+  const storedScenario = kind === "scenario" ? normalizeScenario(scenario) : null;
+  if (kind === "scenario" && (path !== null || !storedScenario)) return null;
+  if (path === null && storedVersions.length === 0 && !storedScenario) return null;
   const highest = storedVersions.reduce((max, version) => Math.max(max, version.number), 0);
   return {
     id,
@@ -274,8 +306,73 @@ function normalizeMaterial(value: unknown): StoredMaterial | null {
     origin: normalizeOrigin(origin),
     createdAt,
     versions: storedVersions,
-    nextVersion: Math.max(highest + 1, isCount(nextVersion) ? nextVersion : 1)
+    nextVersion: Math.max(highest + 1, isCount(nextVersion) ? nextVersion : 1),
+    scenario: storedScenario
   };
+}
+
+function normalizeScenario(value: unknown): StoredScenario | null {
+  if (!isRecord(value) || (value.state !== "recording" && value.state !== "done") || !isFiniteNumber(value.startedAt)) return null;
+  if (!Array.isArray(value.steps)) return null;
+  const steps: StoredScenarioStep[] = [];
+  for (const candidate of value.steps.slice(0, SCENARIO_STEP_LIMIT)) {
+    const step = normalizeStep(candidate, steps.length);
+    if (step) steps.push(step);
+  }
+  const interrupted = value.state === "recording";
+  return {
+    state: "done",
+    startedAt: value.startedAt,
+    endedAt: interrupted ? steps.at(-1)?.at ?? value.startedAt : isFiniteNumber(value.endedAt) ? value.endedAt : null,
+    viewport: isSize(value.viewport) ? { width: value.viewport.width, height: value.viewport.height } : null,
+    stopReason: interrupted ? "app-closed" : typeof value.stopReason === "string" && STOP_REASONS.has(value.stopReason as ScenarioStopReason)
+      ? value.stopReason as ScenarioStopReason
+      : null,
+    steps
+  };
+}
+
+function normalizeStep(value: unknown, index: number): StoredScenarioStep | null {
+  if (!isRecord(value) || typeof value.kind !== "string" || !STEP_KINDS.has(value.kind as ScenarioStepKind) || !isFiniteNumber(value.at)) return null;
+  return {
+    index,
+    kind: value.kind as ScenarioStepKind,
+    at: value.at,
+    url: typeof value.url === "string" && value.url.length <= MAX_URL ? value.url : null,
+    title: typeof value.title === "string" ? value.title.slice(0, MAX_TITLE) : null,
+    point: isPoint(value.point) ? { x: value.point.x, y: value.point.y } : null,
+    element: normalizeStepElement(value.element),
+    text: typeof value.text === "string" ? value.text.slice(0, SCENARIO_TEXT_LIMIT) : null,
+    image: normalizeStepImage(value.image)
+  };
+}
+
+function normalizeStepElement(value: unknown): { role: string; name: string } | null {
+  if (!isRecord(value) || typeof value.role !== "string" || typeof value.name !== "string") return null;
+  return { role: value.role.slice(0, MAX_ELEMENT_ROLE), name: value.name.slice(0, MAX_ELEMENT_NAME) };
+}
+
+function normalizeStepImage(value: unknown): StoredStepImage | null {
+  if (!isRecord(value) || typeof value.sha256 !== "string" || !SHA256_PATTERN.test(value.sha256)) return null;
+  if (typeof value.mimeType !== "string" || !IMAGE_MIME.has(value.mimeType) || !isSize(value.natural)) return null;
+  if (!Number.isSafeInteger(value.byteSize) || (value.byteSize as number) < 0) return null;
+  return { sha256: value.sha256, byteSize: value.byteSize as number, mimeType: value.mimeType, natural: { width: value.natural.width, height: value.natural.height } };
+}
+
+export function normalizeElements(value: unknown): PageElement[] {
+  if (!Array.isArray(value)) return [];
+  const elements: PageElement[] = [];
+  for (const candidate of value.slice(0, PAGE_ELEMENT_LIMIT)) {
+    if (!isRecord(candidate) || typeof candidate.role !== "string" || typeof candidate.name !== "string" || !isRecord(candidate.bounds)) continue;
+    const { x, y, width, height } = candidate.bounds;
+    if (![x, y, width, height].every(isFiniteNumber) || (width as number) < 0 || (height as number) < 0) continue;
+    elements.push({
+      role: candidate.role.slice(0, MAX_ELEMENT_ROLE),
+      name: candidate.name.slice(0, MAX_ELEMENT_NAME),
+      bounds: { x: x as number, y: y as number, width: width as number, height: height as number }
+    });
+  }
+  return elements;
 }
 
 function normalizeVersions(value: unknown): StoredVersion[] {
@@ -332,7 +429,8 @@ export function normalizeOrigin(value: unknown): MaterialOrigin | null {
       kind: "browser",
       url: value.url,
       title: value.title.slice(0, MAX_TITLE),
-      viewport: { width: value.viewport.width, height: value.viewport.height }
+      viewport: { width: value.viewport.width, height: value.viewport.height },
+      elements: normalizeElements(value.elements)
     };
   }
   return null;

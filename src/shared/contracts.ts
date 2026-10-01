@@ -260,13 +260,19 @@ export const STICKY_NOTE_MIN_SIZE: Size = { width: 180, height: 140 };
 export const STICKY_NOTE_MAX_SIZE: Size = { width: 1_000, height: 800 };
 export const STICKY_NOTE_DEFAULT_SIZE: Size = { width: 300, height: 220 };
 
-export type MaterialKind = "image" | "text" | "video" | "audio" | "pdf" | "file";
+export type MaterialKind = "image" | "text" | "video" | "audio" | "pdf" | "file" | "scenario";
 export type MaterialState = "ready" | "missing" | "moved" | "unreadable";
 export type MaterialVersionReason = "pinned" | "remark" | "capture" | "edit";
 
+export interface PageElement {
+  role: string;
+  name: string;
+  bounds: BrowserElementBounds;
+}
+
 export type MaterialOrigin =
   | { kind: "clipboard" }
-  | { kind: "browser"; url: string; title: string; viewport: Size }
+  | { kind: "browser"; url: string; title: string; viewport: Size; elements: PageElement[] }
   | { kind: "watch"; folderName: string };
 
 export interface MaterialVersion {
@@ -293,7 +299,64 @@ export interface CanvasMaterial extends SessionBounds {
   origin: MaterialOrigin | null;
   versions: MaterialVersion[];
   draft: MaterialDraftInfo | null;
+  scenario: MaterialScenario | null;
   createdAt: number;
+}
+
+export type ScenarioStepKind = "start" | "click" | "navigate" | "expectation" | "tab-left" | "tab-returned";
+
+export interface ScenarioStep {
+  index: number;
+  kind: ScenarioStepKind;
+  at: number;
+  url: string | null;
+  title: string | null;
+  point: Point | null;
+  element: { role: string; name: string } | null;
+  text: string | null;
+  image: { natural: Size } | null;
+}
+
+export type ScenarioStopReason = "stopped" | "limit" | "browser-closed" | "app-closed";
+
+export interface MaterialScenario {
+  state: "recording" | "done";
+  startedAt: number;
+  endedAt: number | null;
+  viewport: Size | null;
+  stopReason: ScenarioStopReason | null;
+  steps: ScenarioStep[];
+}
+
+export interface PageShot {
+  base64: string;
+  mimeType: "image/png" | "image/jpeg";
+}
+
+export interface BrowserCaptureInput {
+  url: string;
+  title: string;
+  viewport: Size;
+  elements: PageElement[];
+  shot: PageShot;
+  point: Point;
+}
+
+export interface ScenarioStartInput {
+  url: string;
+  title: string;
+  viewport: Size;
+  point: Point;
+}
+
+export interface ScenarioStepInput {
+  kind: ScenarioStepKind;
+  url: string | null;
+  title: string | null;
+  point: Point | null;
+  element: { role: string; name: string } | null;
+  text: string | null;
+  shot: PageShot | null;
 }
 
 export interface MaterialDraftInfo {
@@ -381,7 +444,8 @@ export type RemarkAnchor =
   | { kind: "point"; x: number; y: number }
   | { kind: "lines"; start: number; end: number }
   | { kind: "time"; start: number; end: number | null }
-  | { kind: "page"; page: number };
+  | { kind: "page"; page: number }
+  | { kind: "step"; index: number };
 
 export interface RemarkTarget {
   materialId: string;
@@ -1850,6 +1914,10 @@ export interface CanvasTTYApi {
     previewHandoff(draft: HandoffDraft): Promise<HandoffPreviewResult>;
     sendHandoff(draft: HandoffDraft): Promise<HandoffResult>;
     pickResultsFolder(sessionId: string): Promise<string | null>;
+    captureBrowser(input: BrowserCaptureInput): Promise<MaterialCreateResult>;
+    startScenario(input: ScenarioStartInput): Promise<MaterialCreateResult>;
+    addScenarioStep(id: string, step: ScenarioStepInput): Promise<MaterialResult>;
+    stopScenario(id: string, reason: ScenarioStopReason): Promise<MaterialResult>;
     readText(id: string, versionId: string | null): Promise<MaterialTextResult>;
     saveText(id: string, edit: MaterialTextSave): Promise<MaterialSaveResult>;
     readDraft(id: string): Promise<MaterialDraft | null>;
@@ -2031,6 +2099,10 @@ export const IPC = {
   materialsPreviewHandoff: "materials:preview-handoff",
   materialsSendHandoff: "materials:send-handoff",
   materialsPickResultsFolder: "materials:pick-results-folder",
+  materialsCaptureBrowser: "materials:capture-browser",
+  materialsStartScenario: "materials:start-scenario",
+  materialsAddScenarioStep: "materials:add-scenario-step",
+  materialsStopScenario: "materials:stop-scenario",
   materialsReadText: "materials:read-text",
   materialsSaveText: "materials:save-text",
   materialsReadDraft: "materials:read-draft",

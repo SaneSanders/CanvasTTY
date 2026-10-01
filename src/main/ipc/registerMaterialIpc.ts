@@ -71,6 +71,26 @@ export function registerMaterialIpc(ipcMain: IpcRegistrar, { materials, handoffs
     return materials.pinVersion(requireId(id));
   });
 
+  ipcMain.handle(IPC.materialsCaptureBrowser, (event, input: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.captureBrowser(input);
+  });
+
+  ipcMain.handle(IPC.materialsStartScenario, (event, input: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.startScenario(input);
+  });
+
+  ipcMain.handle(IPC.materialsAddScenarioStep, (event, id: unknown, step: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.addScenarioStep(requireId(id), step);
+  });
+
+  ipcMain.handle(IPC.materialsStopScenario, (event, id: unknown, reason: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.stopScenario(requireId(id), reason);
+  });
+
   ipcMain.handle(IPC.materialsReveal, (event, id: unknown) => {
     assertMainRenderer(event, getMainWindow);
     const location = materials.location(requireId(id));

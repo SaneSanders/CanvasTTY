@@ -306,3 +306,14 @@ test("the handoff dialog ships its focus-visible field styles", async () => {
   assert.match(styles, /\.handoff-dialog__form textarea:focus-visible/);
   assert.match(styles, /\.handoff-dialog__actions button:focus-visible/);
 });
+
+test("scenario styles live under material-scenario and the top-center slot matches", async () => {
+  const [styles, scenarioBody] = await Promise.all([
+    readFile(appStylesPath, "utf8"),
+    readFile(new URL("../src/renderer/src/features/materials/ScenarioBody.tsx", import.meta.url), "utf8")
+  ]);
+  assert.match(scenarioBody, /"material-scenario"/);
+  assert.doesNotMatch(styles, /^\.scenario \{/m);
+  assert.match(styles, /^\.material-scenario \{/m);
+  assert.match(styles, /\.canvas-overlay-slot--top-center \{ top: 18px;/);
+});

@@ -72,6 +72,7 @@ const STRINGS = {
     point: (x: number, y: number, size: string) => `точка (${x}, ${y}) из ${size} px`,
     regionShare: (x: string, y: string) => `область: по ширине ${x}, по высоте ${y}`,
     pointShare: (x: string, y: string) => `точка: по ширине ${x}, по высоте ${y}`,
+    step: (index: number) => `шаг ${index}`,
     line: (line: number) => `строка ${line}`,
     lines: (start: number, end: number) => `строки ${start}–${end}`,
     excerpt: "Эти строки в той версии:",
@@ -108,6 +109,7 @@ const STRINGS = {
     point: (x: number, y: number, size: string) => `point (${x}, ${y}) of ${size} px`,
     regionShare: (x: string, y: string) => `area ${x} across, ${y} down`,
     pointShare: (x: string, y: string) => `point ${x} across, ${y} down`,
+    step: (index: number) => `step ${index}`,
     line: (line: number) => `line ${line}`,
     lines: (start: number, end: number) => `lines ${start}–${end}`,
     excerpt: "These lines in that version:",
@@ -134,9 +136,12 @@ export function describeAnchor(anchor: RemarkAnchor, natural: Size | null, local
   if (anchor.kind === "time") return anchor.end === null ? strings.moment(formatClock(anchor.start)) : strings.span(formatClock(anchor.start), formatClock(anchor.end));
   if (anchor.kind === "whole") return strings.whole;
   if (!natural) {
-    return anchor.kind === "point"
-      ? strings.pointShare(share(anchor.x), share(anchor.y))
-      : strings.regionShare(`${share(anchor.x)}–${share(anchor.x + anchor.width)}`, `${share(anchor.y)}–${share(anchor.y + anchor.height)}`);
+    if (anchor.kind === "point") return strings.pointShare(share(anchor.x), share(anchor.y));
+    if (anchor.kind === "region") {
+      return strings.regionShare(`${share(anchor.x)}–${share(anchor.x + anchor.width)}`, `${share(anchor.y)}–${share(anchor.y + anchor.height)}`);
+    }
+    if (anchor.kind === "step") return strings.step(anchor.index);
+    return strings.whole;
   }
   const size = `${natural.width}×${natural.height}`;
   if (anchor.kind === "point") {

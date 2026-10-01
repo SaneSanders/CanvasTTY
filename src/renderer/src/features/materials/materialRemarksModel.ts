@@ -90,6 +90,7 @@ export function remarkAnchorLabel(anchor: RemarkAnchor, locale: LocaleId): strin
     case "time": return `${t(locale, "remarkAnchorTime")} ${anchor.end === null ? formatClock(anchor.start) : `${formatClock(anchor.start)}–${formatClock(anchor.end)}`}`;
     case "region": return t(locale, "remarkAnchorRegion");
     case "point": return t(locale, "remarkAnchorPoint");
+    case "step": return t(locale, "remarkAnchorStep");
     case "whole": return t(locale, "remarkAnchorWhole");
   }
 }

@@ -44,7 +44,11 @@ interface CanvasContextMenuProps {
   materialHasLocation: boolean;
   onAddFiles(): void;
   onPasteFiles(): void;
+  onCapturePage: (() => void) | null;
+  onToggleRecording: (() => void) | null;
+  recording: boolean;
   onPinMaterial(): void;
+  onAddRemark: (() => void) | null;
   onSendMaterial: (() => void) | null;
   onRevealMaterial(): void;
   onCopyMaterialPath(): void;
@@ -74,7 +78,11 @@ export function CanvasContextMenu({
   materialHasLocation,
   onAddFiles,
   onPasteFiles,
+  onCapturePage,
+  onToggleRecording,
+  recording,
   onPinMaterial,
+  onAddRemark,
   onSendMaterial,
   onRevealMaterial,
   onCopyMaterialPath,
@@ -201,6 +209,16 @@ export function CanvasContextMenu({
           <CanvasMenuRow icon="browser" role="menuitem" onClick={onOpenBrowser}>
             {t(locale, "canvasMenuOpenBrowser")}
           </CanvasMenuRow>
+          {onCapturePage && (
+            <CanvasMenuRow icon="camera" role="menuitem" onClick={onCapturePage}>
+              {t(locale, "browserCapturePage")}
+            </CanvasMenuRow>
+          )}
+          {onToggleRecording && (
+            <CanvasMenuRow icon="record" role="menuitem" onClick={onToggleRecording}>
+              {t(locale, recording ? "browserStopRecording" : "browserRecordScenario")}
+            </CanvasMenuRow>
+          )}
           <CanvasMenuDivider />
           <CanvasMenuRow
             icon="settings"
@@ -271,6 +289,11 @@ export function CanvasContextMenu({
 
       {kind === "material" && (
         <>
+          {onAddRemark && (
+            <CanvasMenuRow icon="remark-add" role="menuitem" onClick={onAddRemark}>
+              {t(locale, "remarkAdd")}
+            </CanvasMenuRow>
+          )}
           {onSendMaterial && (
             <CanvasMenuRow icon="send" role="menuitem" onClick={onSendMaterial}>
               {t(locale, "handoffSendToAgent")}

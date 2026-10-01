@@ -2,13 +2,16 @@ import arrowIcon from "../assets/icons/lucide/arrow-right.svg";
 import appWindowIcon from "../assets/icons/lucide/app-window.svg";
 import attentionIcon from "../assets/icons/lucide/circle-help.svg";
 import blocksIcon from "../assets/icons/lucide/blocks.svg";
+import cameraIcon from "../assets/icons/lucide/camera.svg";
 import checkIcon from "../assets/icons/lucide/check.svg";
 import chevronIcon from "../assets/icons/lucide/chevron-down.svg";
+import columnsIcon from "../assets/icons/lucide/columns-2.svg";
 import closeIcon from "../assets/icons/lucide/x.svg";
 import copyIcon from "../assets/icons/lucide/copy.svg";
 import crosshairIcon from "../assets/icons/lucide/crosshair.svg";
 import downloadIcon from "../assets/icons/lucide/download.svg";
 import errorIcon from "../assets/icons/lucide/circle-alert.svg";
+import flagIcon from "../assets/icons/lucide/flag.svg";
 import folderIcon from "../assets/icons/lucide/folder.svg";
 import folderOpenIcon from "../assets/icons/lucide/folder-open.svg";
 import clipboardPasteIcon from "../assets/icons/lucide/clipboard-paste.svg";
@@ -20,7 +23,9 @@ import compareIcon from "../assets/icons/lucide/git-compare.svg";
 import filmIcon from "../assets/icons/lucide/film.svg";
 import imageIcon from "../assets/icons/lucide/image.svg";
 import messageSquarePlusIcon from "../assets/icons/lucide/message-square-plus.svg";
+import mousePointerClickIcon from "../assets/icons/lucide/mouse-pointer-click.svg";
 import musicIcon from "../assets/icons/lucide/music.svg";
+import recordIcon from "../assets/icons/lucide/circle-dot.svg";
 import browserIcon from "../assets/icons/lucide/globe.svg";
 import bringToFrontIcon from "../assets/icons/lucide/bring-to-front.svg";
 import homeIcon from "../assets/icons/lucide/house.svg";
@@ -83,6 +88,12 @@ export type UiIconName =
   | "pin"
   | "crosshair"
   | "compare"
+  | "columns"
+  | "scenario"
+  | "record"
+  | "stop"
+  | "camera"
+  | "flag"
   | "remark-add"
   | "folder-open"
   | "clipboard-paste"
@@ -138,6 +149,12 @@ const ICONS: Record<UiIconName, string> = {
   pin: pinIcon,
   crosshair: crosshairIcon,
   compare: compareIcon,
+  columns: columnsIcon,
+  scenario: mousePointerClickIcon,
+  record: recordIcon,
+  stop: maximizeIcon,
+  camera: cameraIcon,
+  flag: flagIcon,
   "remark-add": messageSquarePlusIcon,
   "folder-open": folderOpenIcon,
   "clipboard-paste": clipboardPasteIcon,

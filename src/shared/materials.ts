@@ -1,4 +1,4 @@
-import type { HandoffBlock, HandoffDraft, MaterialKind, Point, ProviderId, RemarkAnchor, SessionBounds, SessionMetadata, Size } from "./contracts.ts";
+import type { HandoffBlock, HandoffDraft, MaterialKind, Point, ProviderId, RemarkAnchor, SessionBounds, SessionMetadata, Size } from "./contracts";
 
 export const MATERIAL_SCHEME = "canvastty-material";
 export const MATERIAL_LIMIT = 256;
@@ -7,13 +7,19 @@ export const MATERIAL_STORAGE_LIMIT = 1024 * 1024 * 1024;
 export const MATERIAL_VERSION_MAX_BYTES = 100 * 1024 * 1024;
 export const REMARK_TEXT_LIMIT = 2_000;
 export const HANDOFF_NOTE_LIMIT = 4_000;
+export const SCENARIO_TEXT_LIMIT = 2_000;
+export const PAGE_ELEMENT_LIMIT = 200;
+export const SCENARIO_STEP_LIMIT = 30;
+export const SCENARIO_TIME_LIMIT_MS = 15 * 60 * 1000;
 export const MATERIAL_MIN_SIZE: Size = { width: 220, height: 150 };
 export const MATERIAL_MAX_SIZE: Size = { width: 2_400, height: 1_800 };
 export const MATERIAL_HEADER_HEIGHT = 54;
 
 const IMAGE_BOX: Size = { width: 440, height: 440 };
 const GRID_GAP = 24;
+export const MATERIAL_PLACEMENT_GAP = 48;
 const GRID_COLUMNS = 4;
+const VISIBLE_CORNER = 240;
 
 const DEFAULT_SIZES: Record<MaterialKind, Size> = {
   image: { width: 420, height: 320 },
@@ -21,7 +27,8 @@ const DEFAULT_SIZES: Record<MaterialKind, Size> = {
   video: { width: 560, height: 380 },
   audio: { width: 420, height: 170 },
   pdf: { width: 360, height: 230 },
-  file: { width: 360, height: 230 }
+  file: { width: 360, height: 230 },
+  scenario: { width: 460, height: 580 }
 };
 
 export interface MaterialType {
@@ -148,6 +155,40 @@ export function materialUrl(id: string, versionId: string | null, revision = 0):
   return versionId === null ? `${base}live?r=${revision}` : `${base}v/${encodeURIComponent(versionId)}`;
 }
 
+export function materialStepUrl(id: string, index: number): string {
+  return `${MATERIAL_SCHEME}://${encodeURIComponent(id)}/step/${index}`;
+}
+
+export function freeSpotBelow(point: Point, size: Size, occupied: readonly SessionBounds[]): Point {
+  let y = point.y;
+  for (let attempt = 0; attempt <= occupied.length; attempt += 1) {
+    const blocker = occupied.find((bounds) => bounds.position.x < point.x + size.width && bounds.position.x + bounds.size.width > point.x
+      && bounds.position.y < y + size.height && bounds.position.y + bounds.size.height > y);
+    if (!blocker) break;
+    y = blocker.position.y + blocker.size.height + GRID_GAP;
+  }
+  return { x: point.x, y };
+}
+
+export function spotBeside(anchor: SessionBounds, size: Size, occupied: readonly SessionBounds[], visible: SessionBounds | null): Point {
+  const gap = MATERIAL_PLACEMENT_GAP;
+  const bases: Point[] = [
+    { x: anchor.position.x + anchor.size.width + gap, y: anchor.position.y },
+    { x: anchor.position.x - gap - size.width, y: anchor.position.y },
+    { x: anchor.position.x, y: anchor.position.y + anchor.size.height + gap }
+  ];
+  const shown = (spot: Point): boolean => !visible || (
+    spot.x >= visible.position.x && spot.y >= visible.position.y
+    && spot.x + Math.min(size.width, VISIBLE_CORNER) <= visible.position.x + visible.size.width
+    && spot.y + Math.min(size.height, VISIBLE_CORNER) <= visible.position.y + visible.size.height
+  );
+  for (const base of bases) {
+    const spot = freeSpotBelow(base, size, occupied);
+    if (shown(spot)) return spot;
+  }
+  return bases[0];
+}
+
 export function materialCardSize(kind: MaterialKind, natural: Size | null): Size {
   if (kind !== "image" || !natural || !(natural.width > 0) || !(natural.height > 0)) {
     return { ...DEFAULT_SIZES[kind] };
@@ -233,6 +274,6 @@ export function formatClock(seconds: number): string {
   return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
 }
 
-export function isAreaAnchor(anchor: import("./contracts.ts").RemarkAnchor): anchor is Extract<import("./contracts.ts").RemarkAnchor, { kind: "region" | "point" }> {
+export function isAreaAnchor(anchor: RemarkAnchor): anchor is Extract<RemarkAnchor, { kind: "region" | "point" }> {
   return anchor.kind === "region" || anchor.kind === "point";
 }

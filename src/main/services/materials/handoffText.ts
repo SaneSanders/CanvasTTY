@@ -3,8 +3,17 @@ import { anchorRect } from "./imageRegions.ts";
 import { formatClock } from "../../../shared/materials.ts";
 
 export const HANDOFF_TEXT_LIMIT = 16_000;
+export const EXCERPT_LINE_LIMIT = 40;
+export const EXCERPT_CHAR_LIMIT = 4_000;
 
 export type HandoffImageMode = "claude" | "codex" | "paths";
+
+export interface HandoffTextExcerpt {
+  start: number;
+  end: number;
+  lines: string[];
+  truncated: boolean;
+}
 
 export interface HandoffTextTarget {
   name: string;
@@ -15,6 +24,7 @@ export interface HandoffTextTarget {
   marked: string | null;
   crop: string | null;
   location: string | null;
+  excerpt: HandoffTextExcerpt | null;
 }
 
 export interface HandoffTextRemark {
@@ -64,6 +74,8 @@ const STRINGS = {
     pointShare: (x: string, y: string) => `точка: по ширине ${x}, по высоте ${y}`,
     line: (line: number) => `строка ${line}`,
     lines: (start: number, end: number) => `строки ${start}–${end}`,
+    excerpt: "Эти строки в той версии:",
+    excerptCut: "(фрагмент обрезан — полный текст в снимке версии)",
     moment: (time: string) => `момент ${time}`,
     pdfPage: (page: number) => `страница ${page}`,
     span: (start: string, end: string) => `отрезок ${start}–${end}`,
@@ -98,6 +110,8 @@ const STRINGS = {
     pointShare: (x: string, y: string) => `point ${x} across, ${y} down`,
     line: (line: number) => `line ${line}`,
     lines: (start: number, end: number) => `lines ${start}–${end}`,
+    excerpt: "These lines in that version:",
+    excerptCut: "(excerpt cut — the full text is in the version snapshot)",
     moment: (time: string) => `at ${time}`,
     pdfPage: (page: number) => `page ${page}`,
     span: (start: string, end: string) => `${start}–${end}`,
@@ -155,6 +169,7 @@ export function handoffText(input: HandoffTextInput): string {
     lines.push(`${strings.snapshot} ${code(target.file)}`);
     if (target.marked) lines.push(`${strings.marked} ${code(target.marked)}`);
     if (target.crop) lines.push(`${strings.crop} ${code(target.crop)}`);
+    if (target.excerpt) lines.push(...excerptBlock(target.excerpt, input.locale));
     if (remark.reference) {
       const reference = remark.reference;
       const details = [
@@ -163,6 +178,7 @@ export function handoffText(input: HandoffTextInput): string {
         reference.crop ? `${strings.crop} ${code(reference.crop)}` : `${strings.snapshot} ${code(reference.file)}`
       ];
       lines.push(`${strings.reference} ${details.join(" · ")}`);
+      if (reference.excerpt) lines.push(...excerptBlock(reference.excerpt, input.locale));
     }
     lines.push(`${strings.requirement} ${remark.text}`);
   }
@@ -178,6 +194,33 @@ export function handoffText(input: HandoffTextInput): string {
 export function handoffPointerText(input: HandoffTextInput, handoffFile: string): string {
   const strings = STRINGS[input.locale];
   return terminalSafe(`${strings.pointer(input.number)} ${code(handoffFile)} ${strings.pointerTail}` + imageBlock(input));
+}
+
+export function excerptLines(text: string, start: number, end: number): HandoffTextExcerpt | null {
+  const all = text.split("\n");
+  if (start < 1 || start > all.length) return null;
+  const last = Math.min(end, all.length);
+  const lines: string[] = [];
+  let used = 0;
+  let truncated = false;
+  for (let index = start - 1; index < last; index += 1) {
+    const line = all[index];
+    if (lines.length >= EXCERPT_LINE_LIMIT || used + line.length > EXCERPT_CHAR_LIMIT) {
+      if (lines.length === 0) lines.push(line.slice(0, EXCERPT_CHAR_LIMIT));
+      truncated = true;
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return { start, end: last, lines, truncated };
+}
+
+function excerptBlock(excerpt: HandoffTextExcerpt, locale: LocaleId): string[] {
+  const strings = STRINGS[locale];
+  const longest = Math.max(0, ...excerpt.lines.flatMap((line) => (line.match(/`+/g) ?? []).map((run) => run.length)));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return [strings.excerpt, fence, ...excerpt.lines, fence, ...(excerpt.truncated ? [strings.excerptCut] : [])];
 }
 
 function imageBlock(input: HandoffTextInput): string {

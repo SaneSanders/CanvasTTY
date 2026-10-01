@@ -14,12 +14,14 @@ import {
   materialRemovalLosesData,
   materialSubtitle,
   materialWidgetAttributes,
+  remarkAddable,
   remarkDrawable,
   type MaterialCommand,
   type MaterialIconName
 } from "./materialCardModel";
 import { remarkNeedsWork, type MaterialRemarkActions, type MaterialRemarking } from "./materialRemarksModel";
 import { RemarkChips } from "./RemarkChips";
+import { TextMaterialBody } from "./TextMaterialBody";
 
 interface MaterialCardProps {
   material: CanvasMaterial;
@@ -74,6 +76,10 @@ export function MaterialCard({
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const summaryMode = useCameraSelector(camera, (current) => current.zoom < SUMMARY_ZOOM);
   const summaryScale = useCameraSelector(camera, (current) => summaryScaleForZoom(current.zoom));
+  const [editing, setEditing] = useState(false);
+  const [textReadable, setTextReadable] = useState(true);
+  const pendingText = useRef(false);
+  const editable = material.kind === "text" && material.location !== null && material.state === "ready" && textReadable;
   const version = latestVersionNumber(material);
   const openRemarks = remarking.remarks.filter(remarkNeedsWork).length;
   const cardRemarks = material.state === "ready"
@@ -94,7 +100,7 @@ export function MaterialCard({
   }, [material.position, material.size]);
 
   const requestRemoval = (): void => {
-    if (materialRemovalLosesData(material) || remarking.remarks.length > 0 || remarking.referencedBy > 0) setConfirmingRemoval(true);
+    if (materialRemovalLosesData(material) || pendingText.current || remarking.remarks.length > 0 || remarking.referencedBy > 0) setConfirmingRemoval(true);
     else onRemove(material.id);
   };
   const requestRemovalRef = useRef(requestRemoval);
@@ -202,6 +208,10 @@ export function MaterialCard({
     applyBounds({ position: material.position, size: material.size });
   };
 
+  useEffect(() => {
+    if (!editable) setEditing(false);
+  }, [editable]);
+
   const drawing = remarking.mode === "draw";
   const toggleRemark = (): void => {
     if (drawing) {
@@ -223,7 +233,7 @@ export function MaterialCard({
       data-interactive="true"
       data-material-id={material.id}
       data-canvas-layer-id={materialLayerId(material.id)}
-      {...materialWidgetAttributes()}
+      {...materialWidgetAttributes(material)}
       style={{
         zIndex: stackIndex,
         width: size.width,
@@ -263,7 +273,22 @@ export function MaterialCard({
               <span>{openRemarks}</span>
             </button>
           )}
-          {remarkDrawable(material) && (
+          {editable && (
+            <button
+              type="button"
+              className={editing ? "material-card__active" : ""}
+              title={t(locale, editing ? "materialTextDone" : "materialTextEdit")}
+              aria-label={t(locale, editing ? "materialTextDone" : "materialTextEdit")}
+              aria-pressed={editing}
+              onClick={() => {
+                if (drawing) remarkActions.cancel();
+                setEditing((value) => !value);
+              }}
+            >
+              <UiIcon name="pencil" size="1.1em" />
+            </button>
+          )}
+          {remarkAddable() && remarkDrawable(material) && (
             <button
               type="button"
               className={drawing ? "material-card__active" : ""}
@@ -308,7 +333,9 @@ export function MaterialCard({
             icon="error"
             title={t(locale, "materialRemoveConfirm")}
             hint={[
-              t(locale, material.location === null ? "materialRemoveCaptureHint" : "materialRemoveVersionsHint"),
+              t(locale, material.location === null
+                ? "materialRemoveCaptureHint"
+                : material.draft != null || pendingText.current ? "materialRemoveDraftHint" : "materialRemoveVersionsHint"),
               remarking.remarks.length > 0 ? `${t(locale, "materialRemoveRemarks")} ${remarking.remarks.length}.` : "",
               remarking.referencedBy > 0 ? t(locale, "materialRemoveReferences") : ""
             ].filter(Boolean).join(" ")}
@@ -320,7 +347,9 @@ export function MaterialCard({
           </MaterialNotice>
         ) : (
           <MaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions}
-            staleVersionIds={staleVersionIds} onAction={onAction} />
+            staleVersionIds={staleVersionIds} editing={editing} onEditingChange={setEditing} onTextReadable={setTextReadable}
+            onPendingText={(pending) => { pendingText.current = pending; }}
+            onAction={onAction} />
         )}
       </div>
       <div className="material-card__summary" aria-hidden={!summaryMode}>
@@ -351,6 +380,10 @@ function MaterialBody({
   remarking,
   remarkActions,
   staleVersionIds,
+  editing,
+  onEditingChange,
+  onTextReadable,
+  onPendingText,
   onAction
 }: {
   material: CanvasMaterial;
@@ -358,6 +391,10 @@ function MaterialBody({
   remarking: MaterialRemarking;
   remarkActions: MaterialRemarkActions;
   staleVersionIds: ReadonlySet<string>;
+  editing: boolean;
+  onEditingChange(editing: boolean): void;
+  onTextReadable(readable: boolean): void;
+  onPendingText(pending: boolean): void;
   onAction(id: string, action: MaterialCommand): void;
 }): React.JSX.Element {
   const [failed, setFailed] = useState(false);
@@ -425,6 +462,13 @@ function MaterialBody({
         <UiIcon name="music" size="2.2em" />
         <audio src={source} controls preload="metadata" onError={() => setFailed(true)} />
       </div>
+    );
+  }
+  if (material.kind === "text") {
+    return (
+      <TextMaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions}
+        staleVersionIds={staleVersionIds} editing={editing} onEditingChange={onEditingChange} onReadable={onTextReadable}
+        onPendingText={onPendingText} />
     );
   }
   const unplaced = remarking.remarks.filter((remark) => remark.target.anchor.kind !== "whole");

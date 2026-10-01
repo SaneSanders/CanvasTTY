@@ -99,6 +99,10 @@ export function materialRejectionKey(reason: MaterialRejectionReason): MaterialR
   }
 }
 
+export function remarkAddable(): boolean {
+  return true;
+}
+
 export function remarkDrawable(material: CanvasMaterial): boolean {
   return material.state === "ready" && (material.kind === "image" || material.kind === "text" || material.kind === "video" || material.kind === "audio" || material.kind === "pdf" || material.kind === "file");
 }
@@ -107,12 +111,16 @@ export function remarkPickable(material: CanvasMaterial): boolean {
   return remarkDrawable(material);
 }
 
-export function materialWidgetAttributes(): Record<string, string | undefined> {
-  return {};
+export function materialWidgetAttributes(material: Pick<CanvasMaterial, "id" | "kind">): Record<string, string | undefined> {
+  const focusable = material.kind === "text";
+  return {
+    "data-canvas-widget-id": focusable ? `material:${material.id}` : undefined,
+    "data-canvas-widget-focusable": focusable ? "true" : undefined
+  };
 }
 
 export function materialRemovalLosesData(material: CanvasMaterial): boolean {
-  return material.location === null || material.versions.length > 0;
+  return material.location === null || material.versions.length > 0 || material.draft != null;
 }
 
 export function addResultNeedsNotice(result: MaterialsAddResult): boolean {

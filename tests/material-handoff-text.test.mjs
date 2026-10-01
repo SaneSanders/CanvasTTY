@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { anchorRect, clampRect, cropRect, drawOutline, outlineThickness } from "../src/main/services/materials/imageRegions.ts";
-import { describeAnchor, handoffPointerText, handoffText } from "../src/main/services/materials/handoffText.ts";
+import { describeAnchor, EXCERPT_LINE_LIMIT, excerptLines, handoffPointerText, handoffText } from "../src/main/services/materials/handoffText.ts";
 
 const natural = { width: 1200, height: 700 };
 
@@ -151,4 +151,32 @@ test("backticks inside paths cannot break the code span", () => {
   assert.ok(text.includes("- ``/work/odd`name.css``\n"));
   assert.ok(text.includes("- ``` /work/ends`` ```\n"));
   assert.ok(handoffPointerText(input(), "/work/odd`name/handoff.md").includes("``/work/odd`name/handoff.md``"));
+});
+
+test("line remarks name their lines and quote them from the remarked version", () => {
+  assert.equal(describeAnchor({ kind: "lines", start: 4, end: 4 }, null, "en"), "line 4");
+  assert.equal(describeAnchor({ kind: "lines", start: 4, end: 9 }, null, "ru"), "строки 4–9");
+  const source = ["# Title", "", "Intro with ```code```", "Last"].join("\n");
+  const excerpt = excerptLines(source, 3, 99);
+  assert.deepEqual(excerpt, { start: 3, end: 4, lines: ["Intro with ```code```", "Last"], truncated: false });
+  const text = handoffText(input({
+    locale: "en",
+    remarks: [{
+      number: 2,
+      text: "Shorter intro.",
+      target: { name: "README.md", versionNumber: 5, anchor: { kind: "lines", start: 3, end: 4 }, natural: null, file: "2-README-v5.md", marked: null, crop: null, location: "/work/README.md", excerpt },
+      reference: null
+    }]
+  }));
+  assert.match(text, /#2 · README\.md, version 5 · lines 3–4\n/);
+  assert.match(text, /These lines in that version:\n````\nIntro with ```code```\nLast\n````\n/);
+});
+
+test("long excerpts are cut and say so", () => {
+  const long = Array.from({ length: EXCERPT_LINE_LIMIT + 10 }, (_, index) => `line ${index + 1}`).join("\n");
+  const excerpt = excerptLines(long, 1, EXCERPT_LINE_LIMIT + 10);
+  assert.equal(excerpt.lines.length, EXCERPT_LINE_LIMIT);
+  assert.equal(excerpt.truncated, true);
+  assert.equal(excerptLines("x".repeat(10_000), 1, 1).lines[0].length, 4_000);
+  assert.equal(excerptLines("one", 5, 6), null);
 });

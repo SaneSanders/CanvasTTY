@@ -452,7 +452,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
       .map((instance) => ({ id: pluginCanvasWidgetId(instance.id), bounds: instance })),
     ...(renderedBrowserCanvas ? [{ id: browserCanvasWidgetId, bounds: renderedBrowserCanvas }] : []),
     ...renderedMaterials
-      .filter((material) => material.kind === "text" || material.kind === "scenario")
+      .filter((material) => material.kind === "text" || material.kind === "pdf" || material.kind === "scenario")
       .map((material) => ({ id: materialLayerId(material.id), bounds: material }))
   ];
 

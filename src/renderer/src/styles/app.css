@@ -389,6 +389,8 @@ button { border: 0; }
 .canvas-menu__row { width: 100%; padding: .55em .8em; display: flex; align-items: center; gap: .75em; border-radius: .7em; outline: 0; color: var(--text); background: transparent; cursor: pointer; font-weight: 400; text-align: left; white-space: nowrap; }
 .canvas-menu__row:hover, .canvas-menu__row:focus-visible, .canvas-menu__row--selected { background: var(--surface-soft); }
 .canvas-menu__row:focus-visible { box-shadow: inset 0 0 0 .12em var(--primary); }
+.canvas-menu__row:disabled { opacity: .45; cursor: default; }
+.canvas-menu__row:disabled:hover { background: transparent; }
 .canvas-menu__row--indent { padding-left: 1.55em; }
 .canvas-menu__icon { width: 1.85em; height: 1.85em; display: grid; place-items: center; flex: 0 0 auto; border-radius: .55em; color: var(--secondary); background: var(--surface-soft); }
 .canvas-menu__grow { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; }
@@ -482,6 +484,35 @@ button { border: 0; }
 .material-card--draw { box-shadow: 0 0 0 3px var(--pink), var(--shadow-lg); }
 .material-card--pick { box-shadow: 0 0 0 3px var(--blue), var(--shadow-lg); }
 .material-card--text .material-card__body { display: block; }
+.material-card--video .material-card__body, .material-card--audio .material-card__body { display: block; }
+.material-media { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; font-size: calc(12px * var(--ui-scale, 1)); }
+.material-media--video .material-card__video { flex: 1; min-height: 0; }
+.material-media--audio .material-card__audio { flex: 1; min-height: 0; }
+.material-media__timeline { position: relative; flex: none; height: 14px; margin: 0 .8em; border-radius: 7px; background: rgba(255,255,255,.08); }
+.material-media__marker { position: absolute; top: 2px; height: 10px; min-width: 6px; padding: 0; border-radius: 5px; background: var(--marker); cursor: pointer; }
+.material-media__marker--moment { width: 10px; transform: translateX(-50%); border-radius: 50%; }
+.material-media__marker--stale { background: transparent; box-shadow: inset 0 0 0 2px var(--marker); }
+.material-media__marker--selected { box-shadow: 0 0 0 2px color-mix(in srgb, var(--marker) 45%, transparent); }
+.material-media__pending { position: absolute; top: 2px; height: 10px; min-width: 2px; border-radius: 5px; background: color-mix(in srgb, var(--pink) 55%, transparent); pointer-events: none; }
+.material-media__bar { flex: none; padding: .45em .6em; display: flex; flex-wrap: wrap; align-items: center; gap: .4em; color: var(--text-muted-on-dark); }
+.material-media__bar > span:first-child { margin-right: auto; font-family: var(--font-mono); }
+.material-media__bar button { min-height: 2em; padding: .2em .65em; display: inline-flex; align-items: center; gap: .35em; border-radius: .5em; color: var(--text); background: rgba(255,255,255,.08); cursor: pointer; font-weight: 850; }
+.material-media__bar button:disabled { opacity: .45; cursor: default; }
+.material-media__error, .material-pdf__error { color: var(--danger); }
+.material-card--pdf .material-card__body { display: block; }
+.material-pdf { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; font-size: calc(12px * var(--ui-scale, 1)); }
+.material-pdf__status { flex: none; padding: .45em .8em; display: flex; flex-wrap: wrap; align-items: center; gap: .4em; border-bottom: 1px solid rgba(255,255,255,.06); color: var(--text-muted-on-dark); }
+.material-pdf__status > span { margin-right: auto; }
+.material-pdf__scroller { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
+.material-pdf__pages { position: relative; }
+.material-pdf__page { position: absolute; left: 12px; overflow: hidden; border-radius: 4px; background: white; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.material-pdf--drawing .material-pdf__page { cursor: pointer; }
+.material-pdf--drawing .material-pdf__page:hover, .material-pdf__page--marked { box-shadow: 0 0 0 3px var(--pink), 0 2px 10px rgba(0,0,0,.35); }
+.material-pdf__canvas { display: block; width: 100%; height: 100%; }
+.material-pdf__number { position: absolute; left: 6px; bottom: 6px; padding: .1em .45em; border-radius: .4em; color: white; background: rgba(0,0,0,.55); font: 800 .9em/1.4 var(--font-mono); pointer-events: none; }
+.material-pdf__tools { position: absolute; top: 6px; right: 6px; display: flex; gap: .3em; }
+.material-pdf__capture { width: 2em; height: 2em; display: grid; place-items: center; border-radius: .5em; color: white; background: rgba(0,0,0,.55); cursor: pointer; }
+.material-pdf__capture:disabled { opacity: .5; cursor: default; }
 .material-text { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--text); font-size: calc(12px * var(--ui-scale, 1)); }
 .material-text--loading { display: grid; place-items: center; color: var(--text-muted-on-dark); }
 .material-text__banner { flex: none; padding: .45em .7em; display: flex; flex-wrap: wrap; align-items: center; gap: .5em; color: var(--text-dark); background: var(--yellow); font-weight: 750; }

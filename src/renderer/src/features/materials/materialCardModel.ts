@@ -5,7 +5,8 @@ import type {
   MaterialKind,
   MaterialRejectionReason,
   MaterialsAddResult
-} from "../../../../shared/contracts.ts";
+} from "../../../../shared/contracts";
+import { formatClock } from "../../../../shared/materials.ts";
 import { t } from "../../lib/i18n.ts";
 
 export type MaterialIconName = "image" | "file-text" | "film" | "music" | "file" | "scenario";
@@ -32,6 +33,8 @@ export function materialSubtitle(material: CanvasMaterial, locale: LocaleId): st
   switch (origin.kind) {
     case "clipboard": return t(locale, "materialFromClipboard");
     case "browser": return origin.url;
+    case "pdf-page": return `${t(locale, "pdfPageOf")} ${origin.page} · ${origin.sourceName}`;
+    case "frame": return `${t(locale, "mediaFrameOf")} ${formatClock(origin.time)} · ${origin.sourceName}`;
     default: return materialFolder(material.location) ?? "";
   }
 }
@@ -87,7 +90,8 @@ export function materialFailureKey(reason: MaterialFailure): MaterialFailureKey 
   }
 }
 
-export type MaterialRejectionKey = "materialsNotAFile" | "materialsUnreadable" | "materialsLimit" | "materialsQuota" | "materialsTooLarge" | "materialsEmptyClipboard";
+export type MaterialRejectionKey = "materialsNotAFile" | "materialsUnreadable" | "materialsLimit" | "materialsQuota" | "materialsTooLarge"
+  | "materialsEmptyClipboard";
 
 export function materialRejectionKey(reason: MaterialRejectionReason): MaterialRejectionKey {
   switch (reason) {
@@ -100,22 +104,22 @@ export function materialRejectionKey(reason: MaterialRejectionReason): MaterialR
   }
 }
 
-export function remarkAddable(material: CanvasMaterial): boolean {
-  return material.scenario?.state !== "recording";
-}
-
 export function remarkDrawable(material: CanvasMaterial): boolean {
   if (material.state !== "ready") return false;
   if (material.kind === "scenario") return material.scenario?.state === "done";
-  return material.kind === "image" || material.kind === "text" || material.kind === "video" || material.kind === "audio" || material.kind === "pdf" || material.kind === "file";
+  return material.kind === "image" || material.kind === "text" || material.kind === "video" || material.kind === "audio" || material.kind === "pdf";
 }
 
 export function remarkPickable(material: CanvasMaterial): boolean {
   return material.kind !== "scenario" && remarkDrawable(material);
 }
 
+export function remarkAddable(material: CanvasMaterial): boolean {
+  return material.scenario?.state !== "recording";
+}
+
 export function materialWidgetAttributes(material: Pick<CanvasMaterial, "id" | "kind">): Record<string, string | undefined> {
-  const focusable = material.kind === "text" || material.kind === "scenario";
+  const focusable = material.kind === "text" || material.kind === "pdf" || material.kind === "scenario";
   return {
     "data-canvas-widget-id": focusable ? `material:${material.id}` : undefined,
     "data-canvas-widget-focusable": focusable ? "true" : undefined

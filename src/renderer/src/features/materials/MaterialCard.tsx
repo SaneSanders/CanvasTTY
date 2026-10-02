@@ -19,8 +19,14 @@ import {
   type MaterialCommand,
   type MaterialIconName
 } from "./materialCardModel";
-import { remarkNeedsWork, type MaterialRemarkActions, type MaterialRemarking } from "./materialRemarksModel";
+import {
+  remarkNeedsWork,
+  type MaterialRemarkActions,
+  type MaterialRemarking
+} from "./materialRemarksModel";
 import { RemarkChips } from "./RemarkChips";
+import { MediaMaterialBody } from "./MediaMaterialBody";
+import { PdfMaterialBody } from "./PdfMaterialBody";
 import { ScenarioBody, type ScenarioControls } from "./ScenarioBody";
 import { TextMaterialBody } from "./TextMaterialBody";
 
@@ -211,10 +217,6 @@ export function MaterialCard({
     applyBounds({ position: material.position, size: material.size });
   };
 
-  useEffect(() => {
-    if (!editable) setEditing(false);
-  }, [editable]);
-
   const drawing = remarking.mode === "draw";
   const toggleRemark = (): void => {
     if (drawing) {
@@ -224,6 +226,10 @@ export function MaterialCard({
     setEditing(false);
     remarkActions.start(material.id, remarkDrawable(material) ? null : { kind: "whole" });
   };
+
+  useEffect(() => {
+    if (!editable) setEditing(false);
+  }, [editable]);
 
   return (
     <article
@@ -292,7 +298,7 @@ export function MaterialCard({
               <UiIcon name="pencil" size="1.1em" />
             </button>
           )}
-          {remarkAddable(material) && remarkDrawable(material) && (
+          {remarkAddable(material) && (
             <button
               type="button"
               className={drawing ? "material-card__active" : ""}
@@ -459,25 +465,23 @@ function MaterialBody({
       </>
     );
   }
-  if (!failed && material.kind === "video") {
-    return <video className="material-card__video" src={source} controls preload="metadata" onError={() => setFailed(true)} />;
-  }
-  if (!failed && material.kind === "audio") {
-    return (
-      <div className="material-card__audio">
-        <UiIcon name="music" size="2.2em" />
-        <audio src={source} controls preload="metadata" onError={() => setFailed(true)} />
-      </div>
-    );
-  }
   if (material.kind === "scenario" && material.scenario) {
     return <ScenarioBody material={material} locale={locale} controls={scenarioControls} remarking={remarking} remarkActions={remarkActions} />;
+  }
+  if (material.kind === "pdf") {
+    return <PdfMaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions} />;
   }
   if (material.kind === "text") {
     return (
       <TextMaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions}
         staleVersionIds={staleVersionIds} editing={editing} onEditingChange={onEditingChange} onReadable={onTextReadable}
         onPendingText={onPendingText} />
+    );
+  }
+  if (!failed && (material.kind === "video" || material.kind === "audio")) {
+    return (
+      <MediaMaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions}
+        staleVersionIds={staleVersionIds} onFailed={() => setFailed(true)} />
     );
   }
   const unplaced = remarking.remarks.filter((remark) => remark.target.anchor.kind !== "whole");

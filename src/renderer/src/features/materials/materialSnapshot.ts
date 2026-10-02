@@ -1,4 +1,4 @@
-import type { CanvasMaterial, MaterialsSnapshot, SessionBounds } from "../../../../shared/contracts.ts";
+import type { CanvasMaterial, MaterialsSnapshot, SessionBounds } from "../../../../shared/contracts";
 
 export const EMPTY_MATERIALS_SNAPSHOT: MaterialsSnapshot = {
   revision: 0,

@@ -80,3 +80,9 @@ test("focusable material cards join the alt+arrow focus candidates", async () =>
   const handler = source.slice(source.indexOf("const focusDirection"), source.indexOf("}, [focusCandidates"));
   assert.match(handler, /renderedMaterials\.find\(\(candidate\) => materialLayerId\(candidate\.id\) === target\)/);
 });
+
+test("repeat widget focus re-triggers through a revision bump", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/renderer/src/features/workspace/useCanvasWidgetFocus.ts", import.meta.url), "utf8");
+  assert.match(source, /revision: current\.revision \+ 1/);
+});

@@ -278,7 +278,7 @@ test("a line remark on a text file carries its snapshot and the quoted lines, wi
     assert.equal(result.ok, true);
     const pasted = terminal.writes[0];
     assert.match(pasted, /#2 · notes\.md, version 1 · line 3\n/);
-    assert.match(pasted, /These lines in that version:\n```\nShip it on Friday\.\n```\n/);
+    assert.match(pasted, /These lines in that version:\n```\n3 \| Ship it on Friday\.\n```\n/);
     assert.doesNotMatch(pasted, /Attached images/);
     assert.deepEqual((await readdir(result.handoff.folder)).sort(), ["2-notes-v1.md", "handoff.md"]);
     assert.equal(await readFile(join(result.handoff.folder, "2-notes-v1.md"), "utf8"), "# Plan\n\nShip it on Friday.\nThen rest.\n");
@@ -403,6 +403,24 @@ test("a version shared by several remarks is copied once, and oversized packages
     assert.deepEqual(await handoffs.send(draft("q1")), { ok: false, reason: "too-long" });
     assert.equal(terminal.writes.length, 0);
   }, { packageLimit: 10 });
+});
+
+test("drawn images and step screenshots count toward the package limit, and an outgrown package leaves nothing behind", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, remark, draft }) => {
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    assert.deepEqual(await handoffs.send(draft("q1")), { ok: false, reason: "too-long" });
+    assert.equal(terminal.writes.length, 0);
+    assert.equal(materials.snapshot().handoffs.length, 0);
+    assert.equal(materials.remark(remark.id).status, "open");
+  }, { packageLimit: 100, images: { canDraw: () => true, marked: async () => Buffer.alloc(80), crop: async () => Buffer.alloc(80) } });
+  await withHandoffs(async ({ materials, handoffs, terminal, draft }) => {
+    const { materialId } = await materials.startScenario({ url: "http://127.0.0.1:8765/index.html", title: "Acme store", viewport: { width: 893, height: 466 }, point: { x: 0, y: 0 } });
+    await materials.addScenarioStep(materialId, { kind: "start", url: "http://127.0.0.1:8765/index.html", title: "Acme store", point: null, element: null, text: null, shot: shotOf(100_000) });
+    await materials.stopScenario(materialId, "stopped");
+    const remark = (await materials.addRemark({ materialId, anchor: { kind: "whole" }, reference: null, text: "Make it behave." })).remark;
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    assert.deepEqual(await handoffs.preview(draft("q1", { remarkIds: [remark.id] })), { ok: false, reason: "too-long" });
+  }, { packageLimit: 50_000 });
 });
 
 test("old handoff packages are pruned by count and by their total size, newest first", async () => {
@@ -639,6 +657,78 @@ test("Codex gets image paths it can read as one path even with spaces, and text 
   }
 });
 
+function shotOf(extra) {
+  return { base64: pngBytes(893, 466, extra).toString("base64"), mimeType: "image/png" };
+}
+
+test("a remark on a page capture names the page and the real elements under it", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, draft }) => {
+    const capture = await materials.captureBrowser({
+      url: "http://127.0.0.1:8765/index.html?session=abc",
+      title: "Acme store",
+      viewport: { width: 893, height: 466 },
+      elements: [
+        { role: "button", name: "Buy now", bounds: { x: 32, y: 369, width: 520, height: 48 } },
+        { role: "link", name: "Pricing", bounds: { x: 813, y: 16, width: 50, height: 24 } }
+      ],
+      shot: shotOf(1),
+      point: { x: 0, y: 0 }
+    });
+    const remark = (await materials.addRemark({
+      materialId: capture.materialId,
+      anchor: { kind: "region", x: 0.03, y: 0.78, width: 0.3, height: 0.12 },
+      reference: null,
+      text: "Show a thank-you message after buying."
+    })).remark;
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    const result = await handoffs.send(draft("q1", { remarkIds: [remark.id] }));
+    assert.equal(result.ok, true);
+    assert.match(terminal.writes[0], /Page: `http:\/\/127\.0\.0\.1:8765\/index\.html` “Acme store”, viewport 893×466\nPage elements in this area: button “Buy now”\n/);
+    assert.doesNotMatch(terminal.writes[0], /session=abc|Pricing/);
+  });
+});
+
+test("a remark on one step of a recording points at that step and shows its screenshot first", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, draft, hero }) => {
+    const { materialId } = await materials.startScenario({ url: "http://127.0.0.1:8765/index.html", title: "Acme store", viewport: { width: 893, height: 466 }, point: { x: 0, y: 0 } });
+    const step = (input) => materials.addScenarioStep(materialId, { url: null, title: null, point: null, element: null, text: null, shot: null, ...input });
+    await step({ kind: "start", url: "http://127.0.0.1:8765/index.html", title: "Acme store", shot: shotOf(2) });
+    await step({ kind: "click", url: "http://127.0.0.1:8765/index.html", point: { x: 72, y: 389 }, element: { role: "button", name: "Buy now" }, shot: shotOf(3) });
+    await step({ kind: "expectation", text: "A thank-you message appears.", shot: shotOf(4) });
+    await materials.stopScenario(materialId, "stopped");
+    assert.deepEqual(await materials.addRemark({ materialId, anchor: { kind: "step", index: 3 }, reference: null, text: "x" }), { ok: false, reason: "kind-mismatch" });
+    assert.deepEqual(await materials.addRemark({ materialId: hero.id, anchor: { kind: "step", index: 0 }, reference: null, text: "x" }), { ok: false, reason: "kind-mismatch" });
+    const remark = (await materials.addRemark({ materialId, anchor: { kind: "step", index: 1 }, reference: null, text: "Nothing happens on this click." })).remark;
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    await handoffs.send(draft("q1", { remarkIds: [remark.id] }));
+    const pasted = terminal.writes[0];
+    assert.match(pasted, / · step 2\n/);
+    assert.match(pasted, /2\. Clicked button “Buy now” at \(72, 389\) — screenshot `2-step2\.png` ← the remark is about this step\n/);
+    assert.match(pasted, /Images \(open them\):\n- `.*2-step2\.png`\n- `.*2-step3\.png`/);
+  });
+});
+
+test("a scenario goes out as numbered facts with the person's expectation marked as theirs", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, draft }) => {
+    const { materialId } = await materials.startScenario({ url: "http://127.0.0.1:8765/index.html", title: "Acme store", viewport: { width: 893, height: 466 }, point: { x: 0, y: 0 } });
+    const step = (input) => materials.addScenarioStep(materialId, { url: null, title: null, point: null, element: null, text: null, shot: null, ...input });
+    await step({ kind: "start", url: "http://127.0.0.1:8765/index.html", title: "Acme store", shot: shotOf(2) });
+    await step({ kind: "click", url: "http://127.0.0.1:8765/index.html", point: { x: 72.4, y: 389 }, element: { role: "button", name: "Buy now" }, shot: shotOf(3) });
+    await step({ kind: "expectation", text: "A thank-you message appears.", shot: shotOf(4) });
+    await materials.stopScenario(materialId, "stopped");
+    const remark = (await materials.addRemark({ materialId, anchor: { kind: "whole" }, reference: null, text: "Make it behave as expected." })).remark;
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    const result = await handoffs.send(draft("q1", { remarkIds: [remark.id] }));
+    const pasted = terminal.writes[0];
+    assert.match(pasted, / · the whole recording\n/);
+    assert.match(pasted, /Recorded in the built-in browser: 3 steps, viewport 893×466\./);
+    assert.match(pasted, /1\. Opened `http:\/\/127\.0\.0\.1:8765\/index\.html` “Acme store” — screenshot `2-step1\.png`/);
+    assert.match(pasted, /2\. Clicked button “Buy now” at \(72, 389\) — screenshot `2-step2\.png`/);
+    assert.match(pasted, /3\. Expected \(the person's words\): “A thank-you message appears\.” — screenshot `2-step3\.png`/);
+    assert.match(pasted, /Images \(open them\):\n- `.*2-step3\.png`\n- `.*2-step2\.png`/);
+    assert.deepEqual((await readdir(result.handoff.folder)).filter((name) => name.includes("step")).sort(), ["2-step1.png", "2-step2.png", "2-step3.png"]);
+  });
+});
 
 test("an accepted or reported remark cannot be sent again, and its status survives", async () => {
   await withHandoffs(async ({ materials, handoffs, terminal, remark, draft }) => {

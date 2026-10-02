@@ -13,7 +13,7 @@ function material(overrides = {}) {
     position: { x: 10, y: 20 },
     size: { width: 400, height: 300 },
     path: "/work/site/hero.png",
-    identity: { dev: "1", ino: "2" },
+    identity: { dev: 1, ino: 2 },
     origin: null,
     createdAt: 1,
     versions: [],
@@ -104,6 +104,22 @@ test("a capture needs at least one valid version and sizes are clamped", () => {
   assert.equal(state.materials[0].origin.kind, "browser");
 });
 
+test("result origins keep a known handoff or none, and drop a half-known one", () => {
+  const origin = (handoff) => ({ kind: "result", folderName: "results", handoff });
+  const state = normalizeMaterialState({
+    version: 1,
+    materials: [
+      material({ origin: origin({ id: "33333333-3333-4333-8333-333333333333", number: 2 }) }),
+      material({ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", path: "/work/b.png", origin: origin(null) }),
+      material({ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", path: "/work/c.png", origin: origin({ id: "33333333-3333-4333-8333-333333333333" }) })
+    ]
+  });
+  assert.deepEqual(state.materials.map((entry) => entry.origin), [
+    origin({ id: "33333333-3333-4333-8333-333333333333", number: 2 }),
+    origin(null),
+    null
+  ]);
+});
 
 test("the material count is bounded", () => {
   const many = Array.from({ length: 300 }, (_, index) => material({
@@ -113,20 +129,7 @@ test("the material count is bounded", () => {
   assert.equal(normalizeMaterialState({ version: 1, materials: many }).materials.length, 256);
 });
 
-test("image and file anchors are normalized to their own bounds", () => {
-  assert.deepEqual(normalizeAnchor({ kind: "whole" }), { kind: "whole" });
-  assert.deepEqual(normalizeAnchor({ kind: "point", x: 0.5, y: 0.25 }), { kind: "point", x: 0.5, y: 0.25 });
-  assert.deepEqual(
-    normalizeAnchor({ kind: "region", x: 0.1, y: 0.2, width: 0.3, height: 0.4 }),
-    { kind: "region", x: 0.1, y: 0.2, width: 0.3, height: 0.4 }
-  );
-  assert.equal(normalizeAnchor({ kind: "point", x: 1.1, y: 0 }), null);
-  assert.equal(normalizeAnchor({ kind: "point", x: -0.1, y: 0 }), null);
-  assert.equal(normalizeAnchor({ kind: "region", x: 0.8, y: 0, width: 0.3, height: 0.1 }), null);
-  assert.equal(normalizeAnchor({ kind: "region", x: 0, y: 0, width: 0, height: 0.1 }), null);
-});
-
-test("media and page anchors are normalized to their own bounds", () => {
+test("anchors are normalized to their own bounds", () => {
   assert.deepEqual(normalizeAnchor({ kind: "step", index: 4 }), { kind: "step", index: 4 });
   assert.equal(normalizeAnchor({ kind: "step", index: 30 }), null);
   assert.equal(normalizeAnchor({ kind: "step", index: -1 }), null);

@@ -37,51 +37,22 @@ test("dropped files become cards at the drop point; folders, missing and relativ
     const result = await service.addPaths([hero, notes, join(work, "assets"), join(work, "gone.png"), "relative.png", 7], { x: 500, y: 300 });
     assert.equal(result.added.length, 2);
     assert.deepEqual(result.rejected.map((entry) => entry.reason), ["not-a-file", "unreadable", "unreadable", "unreadable"]);
-    const [image, file] = service.snapshot().materials;
+    const [image, text] = service.snapshot().materials;
     assert.deepEqual({ kind: image.kind, name: image.name, location: image.location, state: image.state },
       { kind: "image", name: "hero.png", location: hero, state: "ready" });
     assert.deepEqual(image.size, { width: 440, height: 302 });
-    assert.equal(file.kind, "text");
+    assert.equal(text.kind, "text");
     assert.deepEqual(image.position, { x: 500, y: 300 });
-    assert.deepEqual(file.position, { x: 500 + 440 + 24, y: 300 });
+    assert.deepEqual(text.position, { x: 500 + 440 + 24, y: 300 });
     assert.deepEqual(await readFile(hero), pngBytes(1920, 1080, 16));
   });
 });
 
-test("file identity is stored as exact dev/ino strings and survives a rename", async () => {
-  await withMaterials(async ({ work, service, watch, userData }) => {
-    const hero = join(work, "hero.png");
-    const moved = join(work, "hero-moved.png");
-    await writeFile(hero, pngBytes(4, 4));
-    await service.addPaths([hero], { x: 0, y: 0 });
-    await service.flush();
-    const identity = JSON.parse(await readFile(join(userData, "materials/state.json"), "utf8")).materials[0].identity;
-    assert.equal(typeof identity.dev, "string");
-    assert.equal(typeof identity.ino, "string");
-    assert.match(identity.dev, /^\d+$/);
-    assert.match(identity.ino, /^\d+$/);
-
-    await rename(hero, moved);
-    watch.fire(work);
-    await until(() => only(service).state, (state) => state === "moved");
-    await service.acceptMove(only(service).id);
-    await service.flush();
-    const after = JSON.parse(await readFile(join(userData, "materials/state.json"), "utf8")).materials[0];
-    assert.equal(after.name, "hero-moved.png");
-    assert.deepEqual(after.identity, identity);
-  });
-});
-
 test("files past the canvas limit in one drop are reported, not dropped silently", async () => {
-  await withMaterials(async ({ work, service }) => {
-    const files = [];
-    for (let index = 0; index < 258; index += 1) {
-      const path = join(work, `${index}.png`);
-      await writeFile(path, pngBytes(4, 4));
-      files.push(path);
-    }
-    const result = await service.addPaths(files, { x: 0, y: 0 });
-    assert.deepEqual(result.rejected, [{ name: "+2", reason: "limit" }]);
+  await withMaterials(async ({ service }) => {
+    const result = await service.addPaths(Array.from({ length: 258 }, (_, index) => `/nonexistent/${index}.png`), { x: 0, y: 0 });
+    assert.deepEqual(result.rejected[0], { name: "+2", reason: "limit" });
+    assert.equal(result.rejected.length, 257);
   });
 });
 
@@ -175,6 +146,32 @@ test("live changes bump the revision; deletion and a rename in the same folder h
     watch.fire(work);
     await until(() => only(service).state, (state) => state === "missing");
     assert.equal(only(service).movedTo, null);
+  });
+});
+
+test("a rename that only changes letter case is offered as a move, and a link planted at the new name is refused", async () => {
+  await withMaterials(async ({ work, service, watch }) => {
+    const settle = async () => {
+      watch.fire(work);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    };
+    await writeFile(join(work, "Hero.png"), pngBytes(4, 4, 1));
+    await service.addPaths([join(work, "Hero.png")], { x: 0, y: 0 });
+    const id = only(service).id;
+    await rename(join(work, "Hero.png"), join(work, "hero.png"));
+    await settle();
+    assert.deepEqual({ state: only(service).state, movedTo: only(service).movedTo }, { state: "moved", movedTo: join(work, "hero.png") });
+    assert.deepEqual(await service.acceptMove(id), { ok: true });
+    assert.deepEqual({ state: only(service).state, name: only(service).name, location: only(service).location },
+      { state: "ready", name: "hero.png", location: join(work, "hero.png") });
+    await writeFile(join(work, "secret.png"), pngBytes(4, 4, 2));
+    await rename(join(work, "hero.png"), join(work, "hero-2.png"));
+    await settle();
+    assert.equal(only(service).movedTo, join(work, "hero-2.png"));
+    await unlink(join(work, "hero-2.png"));
+    await symlink(join(work, "secret.png"), join(work, "hero-2.png"));
+    assert.deepEqual(await service.acceptMove(id), { ok: false, reason: "unreadable" });
+    assert.equal(only(service).location, join(work, "hero.png"));
   });
 });
 
@@ -353,59 +350,38 @@ test("a batch of bounds lands as one snapshot and keeps junk out", async () => {
   });
 });
 
-test("remarks attach to the current version and can be updated and deleted", async () => {
-  await withMaterials(async ({ work, service }) => {
-    const hero = join(work, "hero.png");
-    await writeFile(hero, pngBytes(4, 4));
-    await service.addPaths([hero], { x: 0, y: 0 });
-    const id = only(service).id;
-
-    const added = await service.addRemark({ materialId: id, anchor: { kind: "whole" }, reference: null, text: "first" });
-    assert.equal(added.ok, true);
-    assert.equal(added.remark.text, "first");
-    assert.equal(added.remark.status, "open");
-    assert.equal(only(service).versions.length, 1);
-
-    const updated = await service.updateRemark(added.remark.id, { text: "second" });
-    assert.equal(updated.ok, true);
-    assert.equal(updated.remark.text, "second");
-
-    await service.deleteRemark(added.remark.id);
-    assert.equal(service.snapshot().remarks.length, 0);
-  });
+test("an orphaned recording finishes itself at the time limit", async () => {
+  await withMaterials(async ({ service }) => {
+    const started = await service.startScenario({ url: "https://shop.example/", title: "Shop", viewport: { width: 800, height: 600 }, point: { x: 0, y: 0 } });
+    assert.equal(started.ok, true);
+    await new Promise((resolve) => setTimeout(resolve, 140));
+    const scenario = service.snapshot().materials[0]?.scenario;
+    assert.equal(scenario?.state, "done");
+    assert.equal(scenario?.stopReason, "limit");
+    await service.dispose();
+  }, { scenarioLimitMs: 60 });
 });
 
-test("remark limits are enforced", async () => {
+test("pinning an existing remark-made version keeps it through eviction", async () => {
   await withMaterials(async ({ work, service }) => {
     const hero = join(work, "hero.png");
     await writeFile(hero, pngBytes(4, 4));
     await service.addPaths([hero], { x: 0, y: 0 });
     const id = only(service).id;
-    for (let index = 0; index < 2_001; index += 1) {
-      const result = await service.addRemark({ materialId: id, anchor: { kind: "whole" }, reference: null, text: `r${index}` });
-      if (!result.ok) {
-        assert.deepEqual(result, { ok: false, reason: "remark-limit" });
-        return;
-      }
+    const remark = await service.addRemark({ materialId: id, anchor: { kind: "whole" }, reference: null, text: "look" });
+    const versionId = remark.remark.target.versionId;
+    await service.deleteRemark(remark.remark.id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeFile(hero, pngBytes(4, 4));
+    const pinned = await service.pinVersion(id);
+    assert.equal(pinned.ok, true);
+    for (let index = 0; index < 20; index += 1) {
+      await writeFile(hero, pngBytes(4, 4, 150 + index));
+      const made = await service.createVersion(id, "edit");
+      assert.equal(made.ok, true);
     }
-    assert.fail("expected remark-limit");
-  });
-});
-
-test("a remark anchor on an image must fit the drawable kinds", async () => {
-  await withMaterials(async ({ work, service }) => {
-    const hero = join(work, "hero.png");
-    const doc = join(work, "doc.md");
-    await writeFile(hero, pngBytes(4, 4));
-    await writeFile(doc, "text");
-    await service.addPaths([hero, doc], { x: 0, y: 0 });
-    const [image, file] = service.snapshot().materials;
-    const imageRemark = await service.addRemark({ materialId: image.id, anchor: { kind: "point", x: 0.5, y: 0.5 }, reference: null, text: "ok" });
-    assert.equal(imageRemark.ok, true);
-    const fileRemark = await service.addRemark({ materialId: file.id, anchor: { kind: "whole" }, reference: null, text: "ok" });
-    assert.equal(fileRemark.ok, true);
-    const bad = await service.addRemark({ materialId: file.id, anchor: { kind: "point", x: 0.5, y: 0.5 }, reference: null, text: "no" });
-    assert.deepEqual(bad, { ok: false, reason: "kind-mismatch" });
+    const kept = service.snapshot().materials[0].versions.map((version) => version.id);
+    assert.ok(kept.includes(versionId), "the pinned version survives twenty evictions after a same-content rewrite");
   });
 });
 

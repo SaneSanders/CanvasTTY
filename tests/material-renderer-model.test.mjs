@@ -8,7 +8,6 @@ import {
 import {
   addResultNeedsNotice,
   formatBytes,
-  latestVersionNumber,
   materialFailureKey,
   materialFolder,
   materialRejectionKey,
@@ -16,6 +15,7 @@ import {
   materialSubtitle,
   remarkAddable
 } from "../src/renderer/src/features/materials/materialCardModel.ts";
+import { compareCandidates } from "../src/renderer/src/features/materials/materialCompare.ts";
 
 const bounds = (x, y, width = 300, height = 200) => ({ position: { x, y }, size: { width, height } });
 
@@ -96,10 +96,34 @@ test("failures and rejections map to explained messages; cancelling says nothing
   assert.equal(addResultNeedsNotice({ added: ["a"], existing: [], rejected: [{ name: "x", reason: "limit" }] }), true);
 });
 
-test("the latest version number is shown on the card badge", () => {
-  assert.equal(latestVersionNumber(material("a", 0, 0)), null);
-  assert.equal(latestVersionNumber(material("a", 0, 0, { versions: [{ id: "v1", number: 1, current: true }] })), 1);
-  assert.equal(latestVersionNumber(material("a", 0, 0, { versions: [{ id: "v1", number: 1, current: true }, { id: "v2", number: 2, current: false }] })), 2);
+test("compare offers results of the remark's own handoffs, and results of unknown origin only as other files", () => {
+  const remark = { target: { materialId: "hero", versionId: "v1", anchor: { kind: "whole" } }, handoffIds: ["h2"] };
+  const image = (id, origin, extra = {}) => ({ id, kind: "image", name: `${id}.png`, origin, liveRevision: 1, location: `/work/${id}.png`, state: "ready", versions: [], ...extra });
+  const result = (id, handoff) => image(id, { kind: "result", folderName: "results", handoff });
+  const candidates = compareCandidates(remark, [
+    image("hero", null, { versions: [{ id: "v1", number: 1, current: false }] }),
+    result("mine", { id: "h2", number: 2 }),
+    result("theirs", { id: "h3", number: 3 }),
+    result("unknown", null)
+  ], "en");
+  assert.deepEqual(candidates.map((candidate) => candidate.key), ["result:mine", "live:hero", "other:theirs", "other:unknown"]);
+});
+
+test("an empty agent list never shows an endless preview loading state", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/renderer/src/features/materials/HandoffDialog.tsx", import.meta.url), "utf8");
+  const noAgents = source.indexOf('agents.length === 0 ? t(locale, "handoffNoAgents")');
+  const loading = source.indexOf('t(locale, "loading")');
+  assert.ok(noAgents > 0 && loading > noAgents);
+});
+
+test("the fullscreen shortcut stays off under the handoff and compare dialogs", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/renderer/src/App.tsx", import.meta.url), "utf8");
+  const toggle = source.indexOf('if (shortcut === "toggleFullscreen")');
+  const guard = source.slice(toggle, source.indexOf("const id", toggle));
+  assert.match(guard, /handoffRemarkIds !== null/);
+  assert.match(guard, /compareRemarkId !== null/);
 });
 
 test("the card subtitle names the origin or falls back to the folder", () => {
@@ -110,6 +134,36 @@ test("the card subtitle names the origin or falls back to the folder", () => {
   assert.equal(materialSubtitle({ ...base, origin: { kind: "browser", url: "example.com/page" } }, "en"), "example.com/page");
   assert.equal(materialSubtitle({ ...base, origin: { kind: "pdf-page", page: 3, sourceName: "brief.pdf" } }, "en"), "Page 3 · brief.pdf");
   assert.equal(materialSubtitle({ ...base, origin: { kind: "frame", time: 65, sourceName: "clip.mp4" } }, "en"), "Frame 1:05 · clip.mp4");
+  assert.equal(materialSubtitle({ ...base, origin: { kind: "result", handoff: { number: 7 }, folderName: "out" } }, "en"), "Appeared during handoff #7 · out");
+});
+
+test("the shortcut reference and the guides name the material chords", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const reference = await readFile(new URL("../src/renderer/src/components/ShortcutReference.tsx", import.meta.url), "utf8");
+  assert.match(reference, /shortcutPasteMaterials/);
+  assert.match(reference, /shortcutSaveText/);
+  assert.match(reference, /shortcutSaveRemark/);
+  for (const guide of ["getting-started.md", "getting-started.ru.md", "getting-started.zh-CN.md"]) {
+    const source = await readFile(new URL(`../docs/${guide}`, import.meta.url), "utf8");
+    assert.ok(source.includes("Cmd/Ctrl+V"), guide);
+    assert.ok(source.includes("Cmd/Ctrl+Enter"), guide);
+  }
+});
+
+test("the send button compares the previewed draft by content, not by reference", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/renderer/src/features/materials/HandoffDialog.tsx", import.meta.url), "utf8");
+  assert.match(source, /handoffDraftKey\(previewDraft\) !== draftKey/);
+  assert.doesNotMatch(source, /previewDraft !== draft \|\| sending/);
+  assert.doesNotMatch(source, /disabled=\{true/);
+});
+
+test("a card asks before removal while the text edit is still only in the editor", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const card = await readFile(new URL("../src/renderer/src/features/materials/MaterialCard.tsx", import.meta.url), "utf8");
+  const body = await readFile(new URL("../src/renderer/src/features/materials/TextMaterialBody.tsx", import.meta.url), "utf8");
+  assert.match(card, /pendingText\.current \|\|/);
+  assert.match(body, /onPendingTextRef\.current\?\.\(state === "draft"\)/);
 });
 
 test("the handoff dialog warns whenever the outcome state is not saved", async () => {

@@ -1069,3 +1069,11 @@ test("a provider recheck during a settings update does not write the settings wi
   assert.equal(disk.homeLauncherProviders.includes("grok"), false);
   assert.deepEqual(disk.homeLauncherProviders, memory.homeLauncherProviders);
 });
+
+test("persistMaterials keeps only a real boolean", () => {
+  assert.equal(normalizeSettings({ persistMaterials: false }, fallback).persistMaterials, false);
+  assert.equal(normalizeSettings({ persistMaterials: true }, fallback).persistMaterials, true);
+  assert.equal(normalizeSettings({ persistMaterials: "yes" }, { ...fallback, persistMaterials: false }).persistMaterials, false);
+  assert.equal(normalizeSettings({}, { ...fallback, persistMaterials: false }).persistMaterials, false);
+  assert.equal(normalizeSettings({}, fallback).persistMaterials, true);
+});

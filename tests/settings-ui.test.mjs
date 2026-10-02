@@ -251,10 +251,13 @@ test("region members follow the region during the gesture and commit only at rel
   assert.match(regionCard, /onMovePreview\(region\.id, next\)/);
   assert.match(regionCard, /onBoundsChange\(region\.id, liveBounds\.current, "move"\);\s*onMovePreview\(region\.id, null\)/);
   assert.match(workspace, /sessionBounds: containedBounds\(sessions, startRegion\)/);
+  assert.match(workspace, /materialBounds: containedBounds\(materials, startRegion\)/);
+  assert.match(workspace, /regionMovePreview\?\.materialBounds\.get\(material\.id\)/);
   assert.match(workspace, /renderedSessions/);
   assert.match(workspace, /renderedPluginCanvas/);
   assert.match(workspace, /renderedBrowserCanvas/);
   assert.match(workspace, /renderedStickyNotes/);
+  assert.match(workspace, /renderedMaterials/);
 });
 
 test("the redesigned menus use shared tokens, em geometry, and the configured UI scale", async () => {
@@ -305,6 +308,13 @@ test("the handoff dialog ships its focus-visible field styles", async () => {
   const styles = await readFile(appStylesPath, "utf8");
   assert.match(styles, /\.handoff-dialog__form textarea:focus-visible/);
   assert.match(styles, /\.handoff-dialog__actions button:focus-visible/);
+});
+
+test("the materials persistence toggle shows storage use and writes persistMaterials", async () => {
+  const settings = await readFile(settingsPanelPath, "utf8");
+  assert.match(settings, /label=\{t\(locale, "persistMaterials"\)\}/);
+  assert.match(settings, /materialStorageUsed/);
+  assert.match(settings, /onChange\(\{ persistMaterials: value === "save" \}\)/);
 });
 
 test("scenario styles live under material-scenario and the top-center slot matches", async () => {

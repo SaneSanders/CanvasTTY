@@ -269,7 +269,8 @@ function normalizeHandoff(value: unknown): MaterialHandoff | null {
         : null,
       error: delivery.state === "sending"
         ? "CanvasTTY closed while sending."
-        : typeof delivery.error === "string" ? delivery.error.slice(0, 500) : null
+        : typeof delivery.error === "string" ? delivery.error.slice(0, 500) : null,
+      stateSaved: delivery.stateSaved !== false
     }
   };
 }

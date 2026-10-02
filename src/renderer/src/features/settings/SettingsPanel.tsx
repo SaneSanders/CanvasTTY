@@ -160,7 +160,7 @@ interface SettingsPanelProps {
   onRecheckAgentClis(): Promise<void>;
   plugins: InstalledPlugin[];
   browser: BrowserSnapshot;
-  materialStorage: MaterialStorageUsage | null;
+  materialsStorage: MaterialStorageUsage;
   onClose(): void;
   onChange(patch: Partial<AppSettings>): Promise<void>;
   onPreviewPlugin(sourceUrl: string): Promise<PluginInstallPreview>;
@@ -191,7 +191,7 @@ export function SettingsPanel({
   onRecheckAgentClis,
   plugins,
   browser,
-  materialStorage,
+  materialsStorage,
   onClose,
   onChange,
   onPreviewPlugin,
@@ -526,7 +526,7 @@ export function SettingsPanel({
               </SettingGroup>
               <SettingGroup
                 label={t(locale, "persistMaterials")}
-                description={materialStorage ? `${t(locale, "materialStorageUsed")} ${formatBytes(materialStorage.usedBytes, locale)} / ${formatBytes(materialStorage.limitBytes, locale)}. ${t(locale, "materialStorageRetention")}` : undefined}
+                description={`${t(locale, "materialStorageUsed")} ${formatBytes(materialsStorage.usedBytes, locale)} / ${formatBytes(materialsStorage.limitBytes, locale)}. ${t(locale, "materialStorageRetention")}`}
               >
                 <Segmented
                   value={settings.persistMaterials ? "save" : "discard"}

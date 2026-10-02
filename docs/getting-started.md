@@ -42,6 +42,7 @@ Launch modes are **Auto** (the default), **Manual**, **Accept edits**, **Plan** 
 - Terminal scrolling and canvas navigation have independent wheel-direction settings. Canvas inversion applies to both pan axes and to ordinary wheel zoom.
 - `Shift+Enter` sends a modified Enter sequence to insert a line break in compatible agent prompts without submitting. `Enter` keeps its normal PTY behavior.
 - With terminal text selected, `Ctrl+C`/`Ctrl+Shift+C` or `Cmd+C` copies it. Paste with `Ctrl+Shift+V`, `Cmd+V`, or `Shift+Insert`. Plain `Ctrl+C` without a selection remains the PTY interrupt.
+- On the canvas, `Cmd/Ctrl+V` pastes files or an image as material cards. Inside a text material `Cmd/Ctrl+S` saves the edit, and `Cmd/Ctrl+Enter` saves a remark (also a scenario expectation). `Esc` cancels remark reference picking and closes open dialogs.
 
 ## Browser controls and activity
 

@@ -30,7 +30,7 @@ export function useRemarkDraft({
   materials: readonly CanvasMaterial[];
   remarks: readonly MaterialRemark[];
   onAddRemark(draft: RemarkDraft): Promise<boolean>;
-  onRemarkAction(remarkId: string, action: "delete" | "send"): void;
+  onRemarkAction(remarkId: string, action: "send" | "compare" | "accept" | "reopen" | "delete"): void;
   onSendMaterialRemarks(materialId: string): void;
 }): RemarkDraftController {
   const [remarkDraft, setRemarkDraft] = useState<RemarkDraftState | null>(null);

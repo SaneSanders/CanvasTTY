@@ -44,10 +44,11 @@ import { StickyNoteCard } from "../notes/StickyNoteCard";
 const MaterialCard = lazy(() => import("../materials/MaterialCard").then((module) => ({ default: module.MaterialCard })));
 import type { ScenarioControls } from "../materials/ScenarioBody";
 import { useScenarioRecorder, type RecorderNotice } from "../materials/useScenarioRecorder";
-import { remarkAddable, remarkDrawable, remarkPickable, type MaterialCommand } from "../materials/materialCardModel";
+import { remarkAddable, remarkDrawable, type MaterialCommand } from "../materials/materialCardModel";
 import { remarkNeedsWork } from "../materials/materialRemarksModel";
 import { RemarkPopover } from "../materials/RemarkPopover";
 import { useRemarkDraft } from "../materials/useRemarkDraft";
+import type { RemarkAction } from "../materials/RemarkPanel";
 import { stickyNoteAtPoint } from "../notes/stickyNoteBounds";
 import { PluginCanvasCard } from "../plugins/PluginCanvasCard";
 import { TerminalCard } from "../terminal/TerminalCard";
@@ -248,13 +249,13 @@ interface WorkspaceCanvasProps {
   onPickMaterials(point: Point): void;
   onPasteMaterials(point: Point): void;
   onMaterialBoundsChange(id: string, bounds: SessionBounds): void;
-  onMaterialBoundsChangeBatch(entries: { id: string; bounds: SessionBounds }[]): void;
+  onMaterialBoundsChangeBatch(entries: Array<{ id: string; bounds: SessionBounds }>): void;
   onRemoveMaterial(id: string): void;
   onMaterialCommand(id: string, command: MaterialCommand): void;
   remarks: readonly MaterialRemark[];
   handoffs: readonly MaterialHandoff[];
   onAddRemark(draft: RemarkDraft): Promise<boolean>;
-  onRemarkAction(remarkId: string, action: "delete"): void;
+  onRemarkAction(remarkId: string, action: RemarkAction): void;
   onSendMaterialRemarks(materialId: string): void;
   onSendAllRemarks(): void;
   onRecorderNotice(notice: RecorderNotice): void;
@@ -526,7 +527,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
       x: anchorPosition.x - anchor.position.x,
       y: anchorPosition.y - anchor.position.y
     };
-    const materialBatch: { id: string; bounds: SessionBounds }[] = [];
+    const materialMoves: Array<{ id: string; bounds: SessionBounds }> = [];
     for (const [memberLayerId, memberBounds] of members) {
       const moved = translateBounds(memberBounds, rigid);
       const ref = parseCanvasLayerId(memberLayerId);
@@ -535,10 +536,10 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
       if (ref.kind === "terminal" && ref.targetId !== null) onSessionBoundsChange(ref.targetId, moved);
       else if (ref.kind === "plugin" && ref.targetId !== null) onPluginCanvasBoundsChange(ref.targetId, moved);
       else if (ref.kind === "note" && ref.targetId !== null) onStickyNoteBoundsChange(ref.targetId, moved);
-      else if (ref.kind === "material" && ref.targetId !== null) materialBatch.push({ id: ref.targetId, bounds: moved });
+      else if (ref.kind === "material" && ref.targetId !== null) materialMoves.push({ id: ref.targetId, bounds: moved });
       else if (ref.kind === "browser" && settings.browserCanvas) onBrowserBoundsChange({ ...settings.browserCanvas, ...moved });
     }
-    if (materialBatch.length > 0) onMaterialBoundsChangeBatch(materialBatch);
+    if (materialMoves.length > 0) onMaterialBoundsChangeBatch(materialMoves);
   }, [boundsByLayer, homeBounds, onBrowserBoundsChange, onMaterialBoundsChangeBatch, onPluginCanvasBoundsChange,
     onSessionBoundsChange, onStickyNoteBoundsChange, renderedCanvasRegions, settings.browserCanvas, settings.snapToGrid]);
 
@@ -1035,16 +1036,6 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
           const layerId = element.closest<HTMLElement>("[data-canvas-layer-id]")?.dataset.canvasLayerId;
           if (layerId) raiseLayer(layerId);
         }
-        if (remarkDraft?.picking && event.button === 0) {
-          const materialId = element.closest<HTMLElement>("[data-material-id]")?.dataset.materialId;
-          const material = materialId ? renderedMaterials.find((candidate) => candidate.id === materialId) : null;
-          if (material && remarkPickable(material)) {
-            event.preventDefault();
-            event.stopPropagation();
-            remarkActions.draw(material.id, { kind: "whole" });
-            return;
-          }
-        }
         if (contextMenu && !element.closest(".canvas-menu")) setContextMenu(null);
         if (regionEditor && !element.closest(".canvas-region-editor")) setRegionEditor(null);
         if (pointerNavigation.handlePointerDownCapture(event)) return;
@@ -1189,7 +1180,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
               captureCanvasWheelOverWidgets={routeWidgetWheelToCanvas || widgetFocus.id !== terminalCanvasWidgetId(session.id)}
               focused={widgetFocus.id === terminalCanvasWidgetId(session.id)}
               focusChangeSource={widgetFocus.source}
-              focusRevision={widgetFocus.id === terminalCanvasWidgetId(session.id) ? widgetFocus.revision : 0}
+              focusRevision={widgetFocus.id === terminalCanvasWidgetId(session.id) ? 1 : 0}
               selected={activeSessionId === session.id}
               forceMasterDetail={masterPixelSkinSessionIds.has(session.id)}
               groupSelected={marqueeSelection.has(terminalLayerId(session.id))}
@@ -1345,7 +1336,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
               captureCanvasWheelOverWidgets={false}
               focused={widgetFocus.id === terminalCanvasWidgetId(session.id)}
               focusChangeSource={widgetFocus.source}
-              focusRevision={widgetFocus.id === terminalCanvasWidgetId(session.id) ? widgetFocus.revision : 0}
+              focusRevision={widgetFocus.id === terminalCanvasWidgetId(session.id) ? 1 : 0}
               selected={activeSessionId === session.id}
               forceMasterDetail={true}
               groupSelected={false}
@@ -1488,10 +1479,6 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
             }
             setContextMenu(null);
           }}
-          onSendRemarks={remarks.some((remark) => remarkNeedsWork(remark)) ? () => {
-            setCommandPaletteOpen(false);
-            onSendAllRemarks();
-          } : null}
           onClose={() => setContextMenu(null)}
         />
       )}

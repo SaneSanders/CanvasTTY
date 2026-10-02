@@ -15,23 +15,20 @@ import type {
   HomeWidgetPlacement,
   InstalledPlugin,
   LaunchProfileId,
-  MaterialsAddResult,
   LaunchRole,
-  MaterialRemark,
-  PluginLaunchValues,
-  SessionEnvironmentChoice,
   LimitsSnapshot,
-  Point,
+  MaterialRemark,
   PluginContribution,
   PluginGridSize,
   PluginInstallPreview,
+  PluginLaunchValues,
   PluginManifest,
   PluginUpdateStatus,
+  Point,
   ProviderId,
   RemarkDraft,
-  RemarkPatch,
-  RemarkResult,
   SessionBounds,
+  SessionEnvironmentChoice,
   SessionSnapshot,
   StickyNote,
   UpdateStatus,
@@ -87,16 +84,15 @@ import { homeGridPixelSize, homeLayoutFitsGrid, placeHomeWidget } from "./featur
 import { boundsInsideRegion, translateBounds } from "./features/workspace/canvasRegions";
 import { DEFAULT_SESSION_SIZE, findNearHomeSessionPosition } from "./features/workspace/sessionPlacement";
 import { useMaterials } from "./features/materials/useMaterials";
+import { useMaterialActions } from "./features/materials/useMaterialActions";
 const HandoffDialog = lazy(() =>
   import("./features/materials/HandoffDialog").then((module) => ({ default: module.HandoffDialog })));
-import {
-  addResultNeedsNotice,
-  materialFailureKey,
-  materialRejectionKey,
-  type MaterialCommand
-} from "./features/materials/materialCardModel";
+const CompareDialog = lazy(() =>
+  import("./features/materials/CompareDialog").then((module) => ({ default: module.CompareDialog })));
 import { remarkNeedsWork } from "./features/materials/materialRemarksModel";
+import type { RemarkAction } from "./features/materials/RemarkPanel";
 import type { RecorderNotice } from "./features/materials/useScenarioRecorder";
+import { materialFailureKey, type MaterialCommand } from "./features/materials/materialCardModel";
 
 interface HomeEditDraft {
   homeGridSize: HomeGridSize;
@@ -357,6 +353,7 @@ export function App(): React.JSX.Element {
   const materialsRef = useRef(materials.materials);
   materialsRef.current = materials.materials;
   const [handoffRemarkIds, setHandoffRemarkIds] = useState<string[] | null>(null);
+  const [compareRemarkId, setCompareRemarkId] = useState<string | null>(null);
   const [lastHandoffSessionId, setLastHandoffSessionId] = useState<string | null>(null);
 
   const openUpdates = useCallback((): void => {
@@ -874,9 +871,10 @@ export function App(): React.JSX.Element {
         const stickyNotes = settingsRef.current.stickyNotes.map((note) => boundsInsideRegion(note, previous)
           ? { ...note, ...translateBounds(note, delta) }
           : note);
-        for (const material of materialsRef.current) {
-          if (boundsInsideRegion(material, previous)) materials.setBounds(material.id, translateBounds(material, delta));
-        }
+        const materialMoves = materialsRef.current
+          .filter((material) => boundsInsideRegion(material, previous))
+          .map((material) => ({ id: material.id, bounds: translateBounds(material, delta) }));
+        if (materialMoves.length > 0) materials.setBoundsBatch(materialMoves);
         setSessions(movedSessions);
         patch.pluginCanvas = pluginCanvas;
         patch.browserCanvas = browserCanvas;
@@ -890,29 +888,17 @@ export function App(): React.JSX.Element {
     void saveSettings(patch);
   }, [materials, saveSettings, sessions]);
 
-  const reportMaterialsAdded = useCallback((result: MaterialsAddResult): void => {
-    if (!addResultNeedsNotice(result)) return;
-    const locale = settingsRef.current.locale;
-    if (result.rejected.length > 0) {
-      const details = result.rejected
-        .map((rejection) => `${rejection.name}: ${t(locale, materialRejectionKey(rejection.reason))}`)
-        .join("; ");
-      showToast(result.rejected.every((rejection) => rejection.reason === "empty-clipboard")
-        ? t(locale, "materialsEmptyClipboard")
-        : `${t(locale, "materialsNotAdded")} — ${details}`);
-      return;
-    }
-    const existing = materialsRef.current.find((material) => material.id === result.existing[0]);
-    showToast(t(locale, "materialsAlreadyOnCanvas"));
-    if (existing) {
+  const { addMaterialFiles, pickMaterials, pasteMaterials, removeMaterial, runMaterialCommand, reportMaterialsFailure } = useMaterialActions({
+    materials,
+    materialsRef,
+    settingsRef,
+    showToast,
+    focusMaterial: useCallback((material: (typeof materialsRef.current)[number]): void => {
       isHomeCamera.current = false;
-      setCamera(focusCamera(existing.position, existing.size));
-    }
-  }, [showToast]);
+      setCamera(focusCamera(material.position, material.size));
+    }, [])
+  });
 
-  const reportMaterialsFailure = useCallback((): void => {
-    showToast(t(settingsRef.current.locale, "materialsFailed"));
-  }, [showToast]);
 
   const reportRecorderNotice = useCallback((notice: RecorderNotice): void => {
     const locale = settingsRef.current.locale;
@@ -922,85 +908,21 @@ export function App(): React.JSX.Element {
     else showToast(t(locale, materialFailureKey(notice) ?? "materialsFailed"));
   }, [showToast]);
 
-  const addMaterialFiles = useCallback((files: File[], point: Point): void => {
-    void materials.addFiles(files, point).then(reportMaterialsAdded, reportMaterialsFailure);
-  }, [materials, reportMaterialsAdded, reportMaterialsFailure]);
-
-  const pickMaterials = useCallback((point: Point): void => {
-    void materials.pick(point).then(reportMaterialsAdded, reportMaterialsFailure);
-  }, [materials, reportMaterialsAdded, reportMaterialsFailure]);
-
-  const pasteMaterials = useCallback((point: Point): void => {
-    void materials.paste(point).then(reportMaterialsAdded, reportMaterialsFailure);
-  }, [materials, reportMaterialsAdded, reportMaterialsFailure]);
-
-  const removeMaterial = useCallback((id: string): void => {
-    void materials.remove(id).catch(reportMaterialsFailure);
-  }, [materials, reportMaterialsFailure]);
-
-  const runMaterialCommand = useCallback((id: string, command: MaterialCommand): void => {
-    const locale = settingsRef.current.locale;
-    const fail = (reason: Parameters<typeof materialFailureKey>[0]): void => {
-      const key = materialFailureKey(reason);
-      if (key) showToast(t(locale, key));
-    };
-    if (command === "reveal") {
-      void materials.reveal(id).catch(reportMaterialsFailure);
-    } else if (command === "copy-path") {
-      const location = materialsRef.current.find((material) => material.id === id)?.location;
-      if (!location) return;
-      window.canvasTTY.clipboard.writeText(location);
-      showToast(t(locale, "materialPathCopied"));
-    } else if (command === "pin") {
-      void materials.pinVersion(id).then((result) => {
-        if (!result.ok) fail(result.reason);
-      }, reportMaterialsFailure);
-    } else {
-      const request = command === "relink" ? materials.relink(id) : materials.acceptMove(id);
-      void request.then((result) => {
-        if (!result.ok) fail(result.reason);
-      }, reportMaterialsFailure);
-    }
-  }, [materials, reportMaterialsFailure, showToast]);
-
   const addRemark = useCallback(async (draft: RemarkDraft): Promise<boolean> => {
     const locale = settingsRef.current.locale;
-    const fail = (reason: Parameters<typeof materialFailureKey>[0]): void => {
-      const key = materialFailureKey(reason);
-      if (key) showToast(t(locale, key));
-    };
-    const result = await materials.addRemark(draft);
-    if (!result.ok) {
-      fail(result.reason);
-      return false;
+    try {
+      const result = await materials.addRemark(draft);
+      if (result.ok) {
+        showToast(`${t(locale, "remarkAdded")} #${result.remark.number}`);
+        return true;
+      }
+      const key = materialFailureKey(result.reason);
+      showToast(key ? t(locale, key) : t(locale, "remarkFailed"));
+    } catch {
+      showToast(t(locale, "remarkFailed"));
     }
-    showToast(t(locale, "remarkAdded"));
-    return true;
+    return false;
   }, [materials, showToast]);
-
-  const updateRemark = useCallback(async (id: string, patch: RemarkPatch): Promise<RemarkResult> => {
-    const locale = settingsRef.current.locale;
-    const fail = (reason: Parameters<typeof materialFailureKey>[0]): void => {
-      const key = materialFailureKey(reason);
-      if (key) showToast(t(locale, key));
-    };
-    const result = await materials.updateRemark(id, patch);
-    if (!result.ok) fail(result.reason);
-    return result;
-  }, [materials, showToast]);
-
-  const deleteRemark = useCallback((id: string): Promise<void> => (
-    materials.deleteRemark(id)
-  ), [materials]);
-
-  const remarkAction = useCallback((remarkId: string, action: "delete" | "send"): void => {
-    if (action === "delete") {
-      void deleteRemark(remarkId).catch(() => showToast(t(settingsRef.current.locale, "materialFailureUnavailable")));
-    } else if (action === "send") {
-      const remark = materials.snapshot.remarks.find((candidate) => candidate.id === remarkId);
-      if (remark && remarkNeedsWork(remark)) setHandoffRemarkIds([remarkId]);
-    }
-  }, [deleteRemark, materials.snapshot.remarks, showToast]);
 
   const sendMaterialRemarks = useCallback((materialId: string): void => {
     setHandoffRemarkIds(materials.snapshot.remarks
@@ -1011,6 +933,21 @@ export function App(): React.JSX.Element {
   const sendAllRemarks = useCallback((): void => {
     setHandoffRemarkIds(materials.snapshot.remarks.filter(remarkNeedsWork).map((remark) => remark.id));
   }, [materials.snapshot.remarks]);
+
+  const setRemarkStatus = useCallback((remark: MaterialRemark, status: "accepted" | "reopened"): void => {
+    void materials.updateRemark(remark.id, { status }).then((result) => {
+      if (result.ok) showToast(`#${remark.number} · ${t(settingsRef.current.locale, status === "accepted" ? "remarkStatusAccepted" : "remarkStatusReopened")}`);
+    }, () => showToast(t(settingsRef.current.locale, "remarkFailed")));
+  }, [materials, showToast]);
+
+  const runRemarkAction = useCallback((remarkId: string, action: RemarkAction): void => {
+    const remark = materials.remark(remarkId);
+    if (!remark) return;
+    if (action === "send") setHandoffRemarkIds([remarkId]);
+    else if (action === "compare") setCompareRemarkId(remarkId);
+    else if (action === "delete") void materials.deleteRemark(remarkId).catch(() => showToast(t(settingsRef.current.locale, "remarkFailed")));
+    else setRemarkStatus(remark, action === "accept" ? "accepted" : "reopened");
+  }, [materials, setRemarkStatus]);
 
   const deleteCanvasRegion = useCallback((id: string): void => {
     const canvasRegions = settingsRef.current.canvasRegions.filter((region) => region.id !== id);
@@ -1451,7 +1388,8 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const performShortcut = (shortcut: "home" | "renameWindow" | "toggleFullscreen"): void => {
       if (shortcut === "toggleFullscreen") {
-        if (settingsOpen || launchProvider !== null || pendingTerminalUrl !== null || homeEditDraft || handoffRemarkIds !== null) return;
+        if (settingsOpen || launchProvider !== null || pendingTerminalUrl !== null || homeEditDraft
+          || handoffRemarkIds !== null || compareRemarkId !== null) return;
         const id = fullscreenSessionId ?? activeSessionId;
         if (id) toggleSessionFullscreen(id);
         return;
@@ -1512,7 +1450,7 @@ export function App(): React.JSX.Element {
       window.removeEventListener("keydown", handleShortcut, true);
       window.removeEventListener("pointerdown", handlePointerShortcut, true);
     };
-  }, [activeSessionId, fullscreenSessionId, goHome, handoffRemarkIds, homeEditDraft, launchProvider, pendingTerminalUrl, settings.locale, settings.shortcuts, settingsOpen, shortcutReferenceOpen, showToast, toggleSessionFullscreen]);
+  }, [activeSessionId, compareRemarkId, fullscreenSessionId, goHome, handoffRemarkIds, homeEditDraft, launchProvider, pendingTerminalUrl, settings.locale, settings.shortcuts, settingsOpen, shortcutReferenceOpen, showToast, toggleSessionFullscreen]);
 
   const appearance = resolveAppearanceSettings(settings);
   const rootClasses = useMemo(
@@ -1562,7 +1500,7 @@ export function App(): React.JSX.Element {
           limitsLoadState={limitsLoadState}
           plugins={plugins}
           browser={browser}
-          browserViewVisible={!settingsOpen && !shortcutReferenceOpen && launchProvider === null && pendingTerminalUrl === null && handoffRemarkIds === null}
+          browserViewVisible={!settingsOpen && !shortcutReferenceOpen && launchProvider === null && pendingTerminalUrl === null && handoffRemarkIds === null && compareRemarkId === null}
           homeEditing={homeEditDraft !== null}
           camera={cameraStore}
           onCameraChange={changeCamera}
@@ -1629,7 +1567,7 @@ export function App(): React.JSX.Element {
           remarks={materials.snapshot.remarks}
           handoffs={materials.snapshot.handoffs}
           onAddRemark={addRemark}
-          onRemarkAction={remarkAction}
+          onRemarkAction={runRemarkAction}
           onSendMaterialRemarks={sendMaterialRemarks}
           onSendAllRemarks={sendAllRemarks}
           onRecorderNotice={reportRecorderNotice}
@@ -1675,7 +1613,7 @@ export function App(): React.JSX.Element {
           onRecheckAgentClis={recheckAgentClis}
           plugins={plugins}
           browser={browser}
-          materialStorage={materials.snapshot.storage}
+          materialsStorage={materials.snapshot.storage}
           onClose={() => setSettingsOpen(false)}
           onChange={saveSettings}
           onPreviewPlugin={previewPlugin}
@@ -1708,6 +1646,20 @@ export function App(): React.JSX.Element {
           onClose={() => setHandoffRemarkIds(null)}
           onSent={(handoff) => setLastHandoffSessionId(handoff.sessionId)}
           onFocusSession={focusSession}
+        />
+        <CompareDialog
+          locale={settings.locale}
+          remark={compareRemarkId ? materials.remark(compareRemarkId) : null}
+          materials={materials.materials}
+          onClose={() => setCompareRemarkId(null)}
+          onAccept={(remark) => {
+            setRemarkStatus(remark, "accepted");
+            setCompareRemarkId(null);
+          }}
+          onReopen={(remark) => {
+            setRemarkStatus(remark, "reopened");
+            setCompareRemarkId(null);
+          }}
         />
       </Suspense>
       {closedGitRisks.length > 0 && (

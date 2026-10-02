@@ -42,6 +42,7 @@ npm run dev
 - 终端滚动与画布导航的滚轮方向可以独立设置。Canvas inversion 同时作用于两个 pan 轴和普通 wheel zoom。
 - `Shift+Enter` 会发送带修饰符的 Enter，在兼容的智能体 prompt 中插入换行而不提交；普通 `Enter` 保持原有 PTY 行为。
 - 选中终端文字后，使用 `Ctrl+C`/`Ctrl+Shift+C` 或 `Cmd+C` 复制；使用 `Ctrl+Shift+V`、`Cmd+V` 或 `Shift+Insert` 粘贴。没有选中文字时，普通 `Ctrl+C` 仍是 PTY 中断。
+- 在画布上，`Cmd/Ctrl+V` 可将文件或图片粘贴为素材卡片。在文本素材中按 `Cmd/Ctrl+S` 保存编辑，按 `Cmd/Ctrl+Enter` 保存备注（也适用于录制中的预期）。`Esc` 可取消备注引用选择并关闭打开的对话框。
 
 ## 浏览器控制与活动
 

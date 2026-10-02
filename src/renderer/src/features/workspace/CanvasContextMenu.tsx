@@ -54,7 +54,6 @@ interface CanvasContextMenuProps {
   onCopyMaterialPath(): void;
   onBringMaterialToFront(): void;
   onRemoveMaterial(): void;
-  onSendRemarks: (() => void) | null;
   onClose(): void;
 }
 
@@ -88,7 +87,6 @@ export function CanvasContextMenu({
   onCopyMaterialPath,
   onBringMaterialToFront,
   onRemoveMaterial,
-  onSendRemarks,
   onClose
 }: CanvasContextMenuProps): React.JSX.Element {
   const menu = useRef<HTMLDivElement>(null);
@@ -152,7 +150,7 @@ export function CanvasContextMenu({
             role="menuitem"
             onClick={onCreateNote}
           >{t(locale, "newStickyNote")}</CanvasMenuRow>
-          <CanvasMenuRow icon="image-plus" role="menuitem" onClick={onAddFiles}>
+          <CanvasMenuRow icon="plus" role="menuitem" onClick={onAddFiles}>
             {t(locale, "materialsAddFiles")}
           </CanvasMenuRow>
           <CanvasMenuRow
@@ -161,11 +159,6 @@ export function CanvasContextMenu({
             role="menuitem"
             onClick={onPasteFiles}
           >{t(locale, "materialsPaste")}</CanvasMenuRow>
-          {onSendRemarks && (
-            <CanvasMenuRow icon="send" role="menuitem" onClick={onSendRemarks}>
-              {t(locale, "handoffSendToAgent")}
-            </CanvasMenuRow>
-          )}
           <CanvasMenuDivider />
           <div className="canvas-menu__submenu-anchor">
             <CanvasMenuRow
@@ -258,7 +251,7 @@ export function CanvasContextMenu({
           <CanvasMenuRow icon="sticky-note" role="menuitem" onClick={onCreateNote}>
             {t(locale, "canvasMenuNoteInRegion")}
           </CanvasMenuRow>
-          <CanvasMenuRow icon="image-plus" role="menuitem" onClick={onAddFiles}>
+          <CanvasMenuRow icon="plus" role="menuitem" onClick={onAddFiles}>
             {t(locale, "materialsAddFiles")}
           </CanvasMenuRow>
           <CanvasMenuDivider />

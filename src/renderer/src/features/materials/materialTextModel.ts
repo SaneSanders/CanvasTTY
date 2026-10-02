@@ -1,4 +1,4 @@
-import type { MaterialFailure, MaterialRemark, MaterialText, RemarkAnchor, RemarkStatus } from "../../../../shared/contracts.ts";
+import type { MaterialFailure, MaterialRemark, MaterialText, RemarkAnchor, RemarkStatus } from "../../../../shared/contracts";
 
 export const TEXT_ROW_HEIGHT = 18;
 export const TEXT_OVERSCAN = 24;

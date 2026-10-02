@@ -216,17 +216,6 @@ export interface MaterialRemarkActions {
   clearReference(): void;
   save(text: string): Promise<boolean>;
   select(remarkId: string | null): void;
-  act(remarkId: string, action: "delete" | "send"): void;
+  act(remarkId: string, action: "send" | "compare" | "accept" | "reopen" | "delete"): void;
   send(materialId: string): void;
-}
-
-export function failureToastKey(reason: MaterialFailure): string | null {
-  switch (reason) {
-    case "version-limit": return "materialVersionLimit";
-    case "remark-limit": return "materialRemarkLimit";
-    case "too-large": return "materialTooLarge";
-    case "quota": return "materialQuota";
-    case "material-limit": return "materialLimit";
-    default: return "materialUnavailable";
-  }
 }

@@ -35,6 +35,7 @@ export function materialSubtitle(material: CanvasMaterial, locale: LocaleId): st
     case "browser": return origin.url;
     case "pdf-page": return `${t(locale, "pdfPageOf")} ${origin.page} · ${origin.sourceName}`;
     case "frame": return `${t(locale, "mediaFrameOf")} ${formatClock(origin.time)} · ${origin.sourceName}`;
+    case "result": return `${origin.handoff ? `${t(locale, "materialResultOf")} #${origin.handoff.number}` : t(locale, "materialResultUnknown")} · ${origin.folderName}`;
     default: return materialFolder(material.location) ?? "";
   }
 }

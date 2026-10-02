@@ -5,7 +5,7 @@ import { t } from "../../lib/i18n";
 import { PROVIDERS } from "../../lib/providers";
 import { deliveryKey, remarkNeedsWork, remarkStatusClass, remarkStatusKey } from "./materialRemarksModel";
 
-export type RemarkAction = "send" | "delete";
+export type RemarkAction = "send" | "compare" | "accept" | "reopen" | "delete";
 
 interface RemarkPanelProps {
   locale: LocaleId;
@@ -66,6 +66,7 @@ export function RemarkPanel({
             <button type="button" className="material-remark-panel__primary" onClick={() => onAction("send")}>
               <UiIcon name="send" size="1.05em" />{t(locale, "handoffSendToAgent")}
             </button>
+            <button type="button" onClick={() => onAction("compare")}><UiIcon name="compare" size="1.05em" />{t(locale, "remarkCompare")}</button>
             {confirmingDelete ? (
               <>
                 <button type="button" className="material-remark-panel__danger" onClick={() => onAction("delete")}>
@@ -80,9 +81,15 @@ export function RemarkPanel({
             )}
           </>
         ) : (
-          <button type="button" className="material-remark-panel__danger" onClick={() => setConfirmingDelete(true)}>
-            <UiIcon name="trash" size="1.05em" />{t(locale, "remarkDelete")}
-          </button>
+          <>
+            <button type="button" onClick={() => onAction("compare")}><UiIcon name="compare" size="1.05em" />{t(locale, "remarkCompare")}</button>
+            {remark.status !== "accepted" && (
+              <button type="button" className="material-remark-panel__primary" onClick={() => onAction("accept")}>
+                <UiIcon name="done" size="1.05em" />{t(locale, "remarkAccept")}
+              </button>
+            )}
+            <button type="button" onClick={() => onAction("reopen")}><UiIcon name="reopen" size="1.05em" />{t(locale, "remarkReopen")}</button>
+          </>
         )}
       </div>
     </section>

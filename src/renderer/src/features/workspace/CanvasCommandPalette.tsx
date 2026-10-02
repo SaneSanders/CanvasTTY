@@ -27,10 +27,10 @@ interface CanvasCommandPaletteProps {
   onCreateNote(): void;
   onAddFiles(): void;
   onPasteFiles(): void;
+  onSendRemarks: (() => void) | null;
   onCapturePage: (() => void) | null;
   onToggleRecording: (() => void) | null;
   recording: boolean;
-  onSendRemarks: (() => void) | null;
   onFitCanvas(): void;
   onOpenBrowser(): void;
   onOpenSettings(): void;
@@ -59,10 +59,10 @@ export function CanvasCommandPalette({
   onCreateNote,
   onAddFiles,
   onPasteFiles,
+  onSendRemarks,
   onCapturePage,
   onToggleRecording,
   recording,
-  onSendRemarks,
   onFitCanvas,
   onOpenBrowser,
   onOpenSettings,
@@ -126,6 +126,15 @@ export function CanvasCommandPalette({
       icon: "clipboard-paste",
       run: onPasteFiles
     },
+    ...(onSendRemarks ? [{
+      id: "materials:send",
+      group: "actions" as const,
+      kind: "action" as const,
+      label: t(locale, "handoffSendAllRemarks"),
+      searchDetail: t(locale, "canvasMenuActions"),
+      icon: "send" as const,
+      run: onSendRemarks
+    }] : []),
     ...launcherItems.map((provider) => ({
       id: `launch:${provider}`,
       group: "actions" as const,
@@ -147,7 +156,7 @@ export function CanvasCommandPalette({
       run: onOpenBrowser
     },
     ...(onCapturePage ? [{
-      id: "browser:capture" as const,
+      id: "browser:capture",
       group: "actions" as const,
       kind: "action" as const,
       label: t(locale, "browserCapturePage"),
@@ -156,22 +165,13 @@ export function CanvasCommandPalette({
       run: onCapturePage
     }] : []),
     ...(onToggleRecording ? [{
-      id: "browser:record" as const,
+      id: "browser:record",
       group: "actions" as const,
       kind: "action" as const,
       label: t(locale, recording ? "browserStopRecording" : "browserRecordScenario"),
       searchDetail: t(locale, "canvasMenuActions"),
       icon: "record" as const,
       run: onToggleRecording
-    }] : []),
-    ...(onSendRemarks ? [{
-      id: "remarks:send" as const,
-      group: "actions" as const,
-      kind: "action" as const,
-      label: t(locale, "handoffSendToAgent"),
-      searchDetail: t(locale, "canvasMenuActions"),
-      icon: "send" as const,
-      run: () => { onSendRemarks(); onClose(); }
     }] : []),
     {
       id: "open:settings",
@@ -183,8 +183,8 @@ export function CanvasCommandPalette({
       shortcut: window.canvasTTY.window.isMacOS ? "⌘," : "Ctrl+,",
       run: onOpenSettings
     }
-  ], [launcherItems, locale, onAddFiles, onCapturePage, onClose, onCreateNote, onCreateRegion, onFitCanvas, onFocusSession, onLaunch,
-    onOpenBrowser, onOpenSettings, onPasteFiles, onSendRemarks, recording, sessions]);
+  ], [launcherItems, locale, onAddFiles, onCreateNote, onCreateRegion, onFitCanvas, onFocusSession, onLaunch, onOpenBrowser,
+    onOpenSettings, onPasteFiles, onSendRemarks, onCapturePage, onToggleRecording, recording, sessions]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase(locale);
     if (!normalized) return commands;

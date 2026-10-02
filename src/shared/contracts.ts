@@ -404,6 +404,7 @@ export interface HandoffDelivery {
   turnEndedAt: number | null;
   note: HandoffPasteNote | null;
   error: string | null;
+  stateSaved: boolean;
 }
 
 export interface HandoffItem {

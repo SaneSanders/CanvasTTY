@@ -335,6 +335,7 @@ function HandoffOutcome({
       {delivery.state === "pasted" && (
         <p>{t(locale, pasteNoteKey(delivery.note, recipient !== null && (recipient.exitCode !== null || recipient.status === "done" || recipient.status === "failed")))}</p>
       )}
+      {delivery.stateSaved === false && <p>{t(locale, "handoffStateNotSaved")}</p>}
       {delivery.error && delivery.state === "failed" && <p>{delivery.error}</p>}
       <p className="handoff-dialog__honest">{t(locale, "handoffHonesty")}</p>
       <div className="handoff-dialog__actions">

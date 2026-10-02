@@ -273,14 +273,13 @@ export interface PageElement {
 export type MaterialOrigin =
   | { kind: "clipboard" }
   | { kind: "browser"; url: string; title: string; viewport: Size; elements: PageElement[] }
-  | { kind: "watch"; folderName: string }
   | { kind: "frame"; sourceId: string; sourceName: string; time: number }
-  | { kind: "pdf-page"; sourceId: string; sourceName: string; page: number };
+  | { kind: "pdf-page"; sourceId: string; sourceName: string; page: number }
+  | { kind: "result"; folderName: string; handoff: { id: string; number: number } | null };
 
 export interface MaterialVersion {
   id: string;
   number: number;
-  createdAt: number;
   byteSize: number;
   reason: MaterialVersionReason;
   current: boolean;
@@ -297,12 +296,10 @@ export interface CanvasMaterial extends SessionBounds {
   movedTo: string | null;
   liveRevision: number;
   byteSize: number | null;
-  modifiedAt: number | null;
   origin: MaterialOrigin | null;
   versions: MaterialVersion[];
   draft: MaterialDraftInfo | null;
   scenario: MaterialScenario | null;
-  createdAt: number;
 }
 
 export type ScenarioStepKind = "start" | "click" | "navigate" | "expectation" | "tab-left" | "tab-returned";
@@ -375,6 +372,8 @@ export interface ScenarioStepInput {
   shot: PageShot | null;
 }
 
+export type MaterialCreateResult = { ok: true; materialId: string } | { ok: false; reason: MaterialFailure };
+
 export interface MaterialDraftInfo {
   baseHash: string;
 }
@@ -405,56 +404,6 @@ export interface MaterialStorageUsage {
   usedBytes: number;
   limitBytes: number;
 }
-
-export interface MaterialsSnapshot {
-  revision: number;
-  materials: CanvasMaterial[];
-  remarks: MaterialRemark[];
-  handoffs: MaterialHandoff[];
-  storage: MaterialStorageUsage;
-}
-
-export type MaterialRejectionReason = "not-a-file" | "unreadable" | "limit" | "quota" | "too-large" | "empty-clipboard";
-
-export interface MaterialRejection {
-  name: string;
-  reason: MaterialRejectionReason;
-}
-
-export interface MaterialsAddResult {
-  added: string[];
-  existing: string[];
-  rejected: MaterialRejection[];
-}
-
-export type MaterialFailure =
-  | "unavailable"
-  | "too-large"
-  | "quota"
-  | "unreadable"
-  | "not-a-file"
-  | "kind-mismatch"
-  | "already-on-canvas"
-  | "version-limit"
-  | "material-limit"
-  | "remark-limit"
-  | "cancelled"
-  | "not-text"
-  | "read-only"
-  | "write-failed";
-
-export type MaterialResult = { ok: true } | { ok: false; reason: MaterialFailure };
-
-export type MaterialTextResult = { ok: true; content: MaterialText } | { ok: false; reason: MaterialFailure };
-
-export type MaterialBytesResult = { ok: true; bytes: Uint8Array } | { ok: false; reason: MaterialFailure };
-
-export type MaterialSaveResult =
-  | { ok: true; content: MaterialText; previous: MaterialVersion | null }
-  | { ok: false; reason: "conflict"; current: MaterialText }
-  | { ok: false; reason: MaterialFailure };
-
-export type MaterialCreateResult = { ok: true; materialId: string } | { ok: false; reason: MaterialFailure };
 
 export type RemarkAnchor =
   | { kind: "whole" }
@@ -505,8 +454,6 @@ export interface RemarkPatch {
 }
 
 export type RemarkResult = { ok: true; remark: MaterialRemark } | { ok: false; reason: MaterialFailure };
-
-export type MaterialVersionResult = { ok: true; version: MaterialVersion } | { ok: false; reason: MaterialFailure };
 
 export type HandoffDeliveryState = "sending" | "submitted" | "pasted" | "failed";
 
@@ -586,6 +533,58 @@ export type HandoffResult =
 export type HandoffPreviewResult =
   | { ok: true; preview: HandoffPreview }
   | { ok: false; reason: HandoffBlock | MaterialFailure };
+
+export interface MaterialsSnapshot {
+  revision: number;
+  materials: CanvasMaterial[];
+  remarks: MaterialRemark[];
+  handoffs: MaterialHandoff[];
+  storage: MaterialStorageUsage;
+}
+
+export type MaterialRejectionReason = "not-a-file" | "unreadable" | "limit" | "quota" | "too-large" | "empty-clipboard";
+
+export interface MaterialRejection {
+  name: string;
+  reason: MaterialRejectionReason;
+}
+
+export interface MaterialsAddResult {
+  added: string[];
+  existing: string[];
+  rejected: MaterialRejection[];
+}
+
+export type MaterialFailure =
+  | "unavailable"
+  | "too-large"
+  | "quota"
+  | "unreadable"
+  | "not-a-file"
+  | "kind-mismatch"
+  | "already-on-canvas"
+  | "version-limit"
+  | "material-limit"
+  | "remark-limit"
+  | "cancelled"
+  | "not-text"
+  | "read-only"
+  | "write-failed";
+
+export type MaterialVersionResult =
+  | { ok: true; version: MaterialVersion }
+  | { ok: false; reason: MaterialFailure };
+
+export type MaterialResult = { ok: true } | { ok: false; reason: MaterialFailure };
+
+export type MaterialTextResult = { ok: true; content: MaterialText } | { ok: false; reason: MaterialFailure };
+
+export type MaterialBytesResult = { ok: true; bytes: Uint8Array } | { ok: false; reason: MaterialFailure };
+
+export type MaterialSaveResult =
+  | { ok: true; content: MaterialText; previous: MaterialVersion | null }
+  | { ok: false; reason: "conflict"; current: MaterialText }
+  | { ok: false; reason: MaterialFailure };
 
 export interface CameraState extends Point {
   zoom: number;
@@ -1920,7 +1919,7 @@ export interface CanvasTTYApi {
     pick(point: Point): Promise<MaterialsAddResult>;
     paste(point: Point): Promise<MaterialsAddResult>;
     setBounds(id: string, bounds: SessionBounds): void;
-    setBoundsBatch(entries: { id: string; bounds: SessionBounds }[]): void;
+    setBoundsBatch(entries: Array<{ id: string; bounds: SessionBounds }>): void;
     remove(id: string): Promise<void>;
     pinVersion(id: string): Promise<MaterialVersionResult>;
     reveal(id: string): Promise<void>;

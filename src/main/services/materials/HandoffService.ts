@@ -33,9 +33,12 @@ import {
   type HandoffTextExcerpt,
   type HandoffTextImage,
   type HandoffTextInput,
+  type HandoffTextPage,
+  type HandoffTextScenario,
   type HandoffTextTarget,
   terminalSafe
 } from "./handoffText.ts";
+import { elementsInArea } from "./pageCapture.ts";
 import { anchorRect, cropRect, type PixelRect } from "./imageRegions.ts";
 import { HANDOFF_REMARK_LIMIT, isId, MAX_SESSION_ID } from "./materialState.ts";
 import type { MaterialService, MaterialVersionFile } from "./MaterialService.ts";
@@ -428,6 +431,38 @@ export class HandoffService {
       const read = await this.options.materials.readText(target.materialId, target.versionId);
       if (read.ok) excerpt = excerptLines(read.content.text, target.anchor.start, target.anchor.end);
     }
+    const page: HandoffTextPage | null = version.kind === "image" && version.origin?.kind === "browser"
+      ? {
+          url: version.origin.url,
+          title: version.origin.title,
+          viewport: version.origin.viewport,
+          elements: elementsInArea(version.origin.elements, target.anchor, version.origin.viewport)
+        }
+      : null;
+    let scenario: HandoffTextScenario | null = null;
+    if (version.kind === "scenario" && version.steps) {
+      const steps = version.steps.map((step) => {
+        if (!step.imagePath) return { ...step, file: null };
+        const key = `${version.versionId}#${step.index}`;
+        const file = copies.get(key) ?? `${prefix}-step${step.index + 1}${step.imageMimeType === "image/jpeg" ? ".jpg" : ".png"}`;
+        if (!copies.has(key)) {
+          copies.set(key, file);
+          files.push({ name: file, source: step.imagePath, byteSize: step.imageByteSize ?? 0, operation: "copy" });
+        }
+        return { ...step, file };
+      });
+      const focus = target.anchor.kind === "step" && target.anchor.index < steps.length ? target.anchor.index : null;
+      if (!reference) {
+        const expected = steps.filter((step) => step.kind === "expectation" && step.file);
+        const focused = focus === null ? null : steps[focus];
+        const reached = steps.filter((step) => step.kind !== "expectation" && step.file).at(-1);
+        const shown = focused
+          ? [...(focused.file ? [focused] : []), ...expected.filter((step) => step !== focused)]
+          : [...expected, ...(reached ? [reached] : [])];
+        for (const step of shown) images.push({ name: step.file!, path: join(folder, step.file!) });
+      }
+      scenario = { viewport: version.origin?.kind === "browser" ? version.origin.viewport : null, steps, focus };
+    }
     return {
       name: version.name,
       versionNumber: version.number,
@@ -437,7 +472,9 @@ export class HandoffService {
       marked,
       crop,
       location: version.location,
-      excerpt
+      excerpt,
+      page,
+      scenario
     };
   }
 

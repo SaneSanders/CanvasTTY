@@ -420,9 +420,6 @@ function isFileNumber(value: unknown): value is string {
 export function normalizeOrigin(value: unknown): MaterialOrigin | null {
   if (!isRecord(value)) return null;
   if (value.kind === "clipboard") return { kind: "clipboard" };
-  if (value.kind === "watch" && typeof value.folderName === "string" && value.folderName.length <= MAX_NAME) {
-    return { kind: "watch", folderName: value.folderName };
-  }
   if (value.kind === "pdf-page" && isId(value.sourceId) && typeof value.sourceName === "string" && value.sourceName.length <= MAX_NAME
     && isPageNumber(value.page)) {
     return { kind: "pdf-page", sourceId: value.sourceId, sourceName: value.sourceName, page: value.page };
@@ -430,6 +427,13 @@ export function normalizeOrigin(value: unknown): MaterialOrigin | null {
   if (value.kind === "frame" && isId(value.sourceId) && typeof value.sourceName === "string" && value.sourceName.length <= MAX_NAME
     && isMediaTime(value.time)) {
     return { kind: "frame", sourceId: value.sourceId, sourceName: value.sourceName, time: value.time };
+  }
+  if (value.kind === "result" && typeof value.folderName === "string" && value.folderName.length <= MAX_NAME) {
+    const handoff = value.handoff;
+    if (handoff === null) return { kind: "result", folderName: value.folderName, handoff: null };
+    if (isRecord(handoff) && isId(handoff.id) && isCount(handoff.number)) {
+      return { kind: "result", folderName: value.folderName, handoff: { id: handoff.id, number: handoff.number } };
+    }
   }
   if (value.kind === "browser" && typeof value.url === "string" && value.url.length <= MAX_URL
     && typeof value.title === "string" && isSize(value.viewport)) {

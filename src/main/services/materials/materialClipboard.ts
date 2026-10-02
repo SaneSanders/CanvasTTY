@@ -30,6 +30,12 @@ export function textPaths(text: string, platform: NodeJS.Platform): string[] {
   return lines.every((line) => absolute(line) && !line.includes("\0") && !isRemote(line, platform)) ? lines : [];
 }
 
+export function captureRejection(reason: MaterialFailure): MaterialRejectionReason {
+  if (reason === "material-limit") return "limit";
+  if (reason === "quota" || reason === "too-large") return reason;
+  return "unreadable";
+}
+
 function listedPaths(paths: readonly string[], absolute = isAbsolute): string[] {
   return paths.filter((path) => path.length > 0 && absolute(path) && !path.includes("\0")).slice(0, MATERIAL_LIMIT);
 }
@@ -37,12 +43,6 @@ function listedPaths(paths: readonly string[], absolute = isAbsolute): string[] 
 function isRemote(path: string, platform: NodeJS.Platform): boolean {
   if (platform === "win32") return /^[\\/]{2}/.test(path);
   return platform === "darwin" && /^\/(?:net|Network)\//.test(path);
-}
-
-export function captureRejection(reason: MaterialFailure): MaterialRejectionReason {
-  if (reason === "material-limit") return "limit";
-  if (reason === "quota" || reason === "too-large") return reason;
-  return "unreadable";
 }
 
 function decodeXml(value: string): string {

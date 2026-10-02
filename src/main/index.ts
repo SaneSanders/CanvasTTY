@@ -52,7 +52,8 @@ import { PluginMediaService } from "./services/PluginMediaService";
 import { MaterialService } from "./services/materials/MaterialService";
 import { HandoffService } from "./services/materials/HandoffService";
 import { electronImageOps } from "./services/materials/electronImageOps";
-import { MATERIAL_SCHEME } from "../shared/materials.ts";
+import { HandoffResults } from "./services/materials/HandoffResults";
+import { MATERIAL_SCHEME } from "../shared/materials";
 import { PluginSecretsService } from "./services/PluginSecretsService";
 import { ProviderSecretsService } from "./services/ProviderSecretsService";
 import { listProviderDirectory, type ProviderDirectorySources } from "./services/providerDirectory";
@@ -177,6 +178,7 @@ let githubAuth: GithubAuthService | null = null;
 let pluginMediaService: PluginMediaService | null = null;
 let materialService: MaterialService | null = null;
 let handoffService: HandoffService | null = null;
+let handoffResults: HandoffResults | null = null;
 let pluginSecretsService: PluginSecretsService | null = null;
 let providerSecretsService: ProviderSecretsService | null = null;
 let hermesHudService: HermesHudService | null = null;
@@ -788,14 +790,18 @@ async function initializeServices(ipc: IpcRegistrar): Promise<void> {
     }
   });
   await materialService.load();
+  const results = new HandoffResults({ materials: materialService });
+  handoffResults = results;
   handoffService = new HandoffService({
     materials: materialService,
     terminals: terminalManager,
     images: electronImageOps,
     root: materialService.handoffsPath,
-    locale: () => settings.get().locale
+    locale: () => settings.get().locale,
+    onSent: (handoff) => results.arm(handoff)
   });
   void handoffService.prune();
+  results.restore(materialService.snapshot().handoffs);
   registerMaterialIpc(ipc, {
     materials: materialService,
     handoffs: handoffService,
@@ -1250,7 +1256,8 @@ async function shutdownServices(): Promise<void> {
   if (browserService) await Promise.allSettled([browserService.dispose()]);
   if (pluginServices) await Promise.allSettled([pluginServices.dispose()]);
   if (pluginManager) await Promise.allSettled([pluginManager.dispose()]);
-  await handoffService?.dispose();
+  handoffService?.dispose();
+  handoffResults?.dispose();
   if (materialService) await Promise.allSettled([materialService.dispose()]);
   await ptyExits;
   diagnostics.record("info", "application", "shutdown.completed");

@@ -11,7 +11,6 @@ export function ShortcutReference({ settings, onClose }: {
   const dialog = useRef<HTMLDialogElement>(null);
   const { locale, shortcuts: bindings } = settings;
   const mac = window.canvasTTY.window.isMacOS;
-<<<<<<< HEAD
   const display = (binding: string) => binding.replace("Meta", mac ? "Command" : "Super")
     .replace("Comma", ",").replace(/ArrowUp/g, "↑").replace(/ArrowDown/g, "↓")
     .replace(/ArrowLeft/g, "←").replace(/ArrowRight/g, "→") || t(locale, "disabled");
@@ -45,9 +44,9 @@ export function ShortcutReference({ settings, onClose }: {
       [["Enter", "Shift+Enter"], "shortcutSearchMatches"]
     ] },
     { title: "keyboardMaterials", shortcuts: [
-      [[mac ? "Command" : "Ctrl", "V"].join("+"), "shortcutPasteMaterials"],
-      [[mac ? "Command" : "Ctrl", "S"].join("+"), "shortcutSaveText"],
-      [[mac ? "Command" : "Ctrl", "Enter"].join("+"), "shortcutSaveRemark"]
+      [[`${mac ? "Command" : "Ctrl"}+V`], "shortcutPasteMaterials"],
+      [[`${mac ? "Command" : "Ctrl"}+S`], "shortcutSaveText"],
+      [[`${mac ? "Command" : "Ctrl"}+Enter`], "shortcutSaveRemark"]
     ] },
     { title: "keyboardCodex", shortcuts: [
       [[bindings.codexSubmit], "keyboardSubmit"],

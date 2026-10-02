@@ -163,7 +163,7 @@ test("a card asks before removal while the text edit is still only in the editor
   const card = await readFile(new URL("../src/renderer/src/features/materials/MaterialCard.tsx", import.meta.url), "utf8");
   const body = await readFile(new URL("../src/renderer/src/features/materials/TextMaterialBody.tsx", import.meta.url), "utf8");
   assert.match(card, /pendingText\.current \|\|/);
-  assert.match(body, /onPendingTextRef\.current\?\.\(state === "draft"\)/);
+  assert.match(body, /onPendingTextRef\.current\?\.\(state === "draft" \|\| state === "conflict"\)/);
 });
 
 test("the handoff dialog warns whenever the outcome state is not saved", async () => {

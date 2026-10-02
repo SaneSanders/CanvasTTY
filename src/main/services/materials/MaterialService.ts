@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { type BigIntStats } from "node:fs";
-import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type {
   CanvasMaterial,
   HandoffDelivery,
+  MaterialBytesResult,
   MaterialCreateResult,
   MaterialDraft,
   MaterialFailure,
@@ -13,14 +15,13 @@ import type {
   MaterialOrigin,
   MaterialRemark,
   MaterialResult,
-  MaterialsAddResult,
-  MaterialsSnapshot,
   MaterialSaveResult,
   MaterialScenario,
-  MaterialState,
   MaterialText,
-  MaterialTextEdit,
   MaterialTextResult,
+  MaterialsAddResult,
+  MaterialsSnapshot,
+  MaterialState,
   MaterialVersion,
   MaterialVersionReason,
   MaterialVersionResult,
@@ -41,12 +42,11 @@ import {
   freeSpotBelow,
   MATERIAL_LIMIT,
   MATERIAL_SCHEME,
-  MATERIAL_STORAGE_LIMIT,
   MATERIAL_VERSION_LIMIT,
-  MATERIAL_VERSION_MAX_BYTES,
   materialCardSize,
   materialsAtPoint,
   materialType,
+  PDF_BYTES_LIMIT,
   REMARK_TEXT_LIMIT,
   SCENARIO_STEP_LIMIT,
   SCENARIO_TIME_LIMIT_MS
@@ -55,11 +55,12 @@ import { streamFile, textResponse } from "../fileResponse.ts";
 import { IMAGE_HEADER_BYTES, imageDimensions } from "./imageDimensions.ts";
 import { fileDigest, MaterialBlobError, MaterialBlobs } from "./MaterialBlobs.ts";
 import { decodeText, encodeText, parseTextEdit, readBounded, replaceFile, TEXT_EDIT_LIMIT } from "./materialText.ts";
-import { PAGE_SHOT_MAX_BYTES, parseCaptureInput, parseStartInput, parseStepInput } from "./pageCapture.ts";
+import { finitePoint, PAGE_SHOT_MAX_BYTES, parseCaptureInput, parsePdfPageInput, parseStartInput, parseStepInput } from "./pageCapture.ts";
 import {
   emptyMaterialState,
   HANDOFF_LIMIT,
   isId,
+  isMediaTime,
   MATERIAL_STATE_VERSION,
   normalizeAnchor,
   normalizeMaterialState,
@@ -72,9 +73,12 @@ import {
 } from "./materialState.ts";
 import { DirectoryWatchSet, nodeWatchFactory, type WatchFactory } from "./materialWatch.ts";
 
+const MATERIAL_STORAGE_LIMIT_BYTES = 1024 * 1024 * 1024;
+const MATERIAL_VERSION_MAX_BYTES = 256 * 1024 * 1024;
+const MATERIAL_CAPTURE_MAX_BYTES = 32 * 1024 * 1024;
+
 const MAX_NAME = 255;
 const CAPTURE_NAME_STEM_LIMIT = 120;
-const MATERIAL_CAPTURE_MAX_BYTES = 32 * 1024 * 1024;
 const PERSIST_DELAY_MS = 250;
 const REFRESH_DELAY_MS = 150;
 const POLL_INTERVAL_MS = 10_000;
@@ -171,7 +175,7 @@ export class MaterialService {
     this.draftsPath = join(this.root, "drafts");
     this.handoffsPath = join(this.root, "handoffs");
     this.blobs = new MaterialBlobs(join(this.root, "versions"));
-    this.storageLimit = options.storageLimitBytes ?? MATERIAL_STORAGE_LIMIT;
+    this.storageLimit = options.storageLimitBytes ?? MATERIAL_STORAGE_LIMIT_BYTES;
     this.watchers = new DirectoryWatchSet(options.watchFactory ?? nodeWatchFactory, (ids) => this.scheduleRefresh(ids));
   }
 
@@ -378,6 +382,40 @@ export class MaterialService {
     });
   }
 
+  captureFrame(sourceId: string, time: unknown, bytes: Uint8Array, natural: Size, point: unknown): Promise<MaterialCreateResult> {
+    const source = this.materials.get(sourceId);
+    if (!source || source.kind !== "video" || !isMediaTime(time)) {
+      return Promise.resolve(failure("unavailable"));
+    }
+    const stem = source.name.replace(/\.[^.]+$/, "");
+    const spot = freeSpotBelow(finitePoint(point), materialCardSize("image", natural), [...this.materials.values()]);
+    return this.addCapture({
+      bytes,
+      name: `${stem.slice(0, 100)} ${formatClock(time).replace(/:/g, "-")}.png`,
+      mimeType: "image/png",
+      origin: { kind: "frame", sourceId, sourceName: source.name, time },
+      point: spot,
+      natural
+    });
+  }
+
+  capturePdfPage(input: unknown): Promise<MaterialCreateResult> {
+    const parsed = parsePdfPageInput(input);
+    if (!parsed) return Promise.resolve(failure("unavailable"));
+    const source = this.materials.get(parsed.materialId);
+    if (!source || source.kind !== "pdf") return Promise.resolve(failure("unavailable"));
+    const stem = source.name.replace(/\.[^.]+$/, "");
+    const spot = freeSpotBelow(parsed.point, materialCardSize("image", parsed.shot.natural), [...this.materials.values()]);
+    return this.addCapture({
+      bytes: parsed.shot.bytes,
+      name: `${stem.slice(0, 100)} p${parsed.page}.${parsed.shot.mimeType === "image/png" ? "png" : "jpg"}`,
+      mimeType: parsed.shot.mimeType,
+      origin: { kind: "pdf-page", sourceId: source.id, sourceName: source.name, page: parsed.page },
+      point: spot,
+      natural: parsed.shot.natural
+    });
+  }
+
   startScenario(input: unknown): Promise<MaterialCreateResult> {
     return this.serial(async () => {
       const parsed = parseStartInput(input);
@@ -470,6 +508,25 @@ export class MaterialService {
     if (!read.ok) return read;
     const content = decodeText(read.bytes);
     return content ? { ok: true, content: { ...content, editable: false } } : failure("not-text");
+  }
+
+  async readPdf(id: string): Promise<MaterialBytesResult> {
+    const material = this.materials.get(id);
+    if (!material || material.kind !== "pdf") return failure("unavailable");
+    let path = material.path;
+    if (path !== null) {
+      try {
+        if (await realpath(path) !== path) return failure("unreadable");
+      } catch {
+        return failure("unavailable");
+      }
+    } else {
+      const latest = material.versions.at(-1);
+      if (!latest) return failure("unavailable");
+      path = this.blobs.pathOf(latest.sha256);
+    }
+    const read = await readBounded(path, PDF_BYTES_LIMIT);
+    return read.ok ? { ok: true, bytes: new Uint8Array(read.bytes) } : read;
   }
 
   saveText(id: string, edit: unknown): Promise<MaterialSaveResult> {
@@ -1321,15 +1378,6 @@ function captureLive(material: StoredMaterial): InspectedLive {
   };
 }
 
-function finitePoint(point: unknown): Point {
-  if (!point || typeof point !== "object") return { x: 0, y: 0 };
-  const { x, y } = point as Partial<Point>;
-  return {
-    x: typeof x === "number" && Number.isFinite(x) ? x : 0,
-    y: typeof y === "number" && Number.isFinite(y) ? y : 0
-  };
-}
-
 async function inspectWorkingFile(material: StoredMaterial, previous: LiveState | undefined): Promise<InspectedLive> {
   const path = material.path!;
   try {
@@ -1399,14 +1447,8 @@ async function findRenamed(directory: string, identity: StoredFileIdentity): Pro
 }
 
 async function readImageDimensions(path: string): Promise<Size | null> {
-  const handle = await open(path, "r");
-  try {
-    const buffer = new Uint8Array(IMAGE_HEADER_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, IMAGE_HEADER_BYTES, 0);
-    return imageDimensions(buffer.subarray(0, bytesRead));
-  } finally {
-    await handle.close();
-  }
+  const read = await readBounded(path, IMAGE_HEADER_BYTES, true);
+  return read.ok ? imageDimensions(read.bytes) : null;
 }
 
 function parseRemarkDraft(value: unknown): RemarkDraft | null {

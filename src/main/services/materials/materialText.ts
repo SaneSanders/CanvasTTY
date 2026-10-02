@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { open, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { MaterialFailure, MaterialText, MaterialTextEdit } from "../../../shared/contracts.ts";
+import type { MaterialFailure, MaterialText, MaterialTextEdit } from "../../../shared/contracts";
 import { SHA256_PATTERN } from "./materialState.ts";
 
 export const TEXT_EDIT_LIMIT = 2 * 1024 * 1024;

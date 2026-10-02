@@ -1,4 +1,4 @@
-import type { Size } from "../../../shared/contracts.ts";
+import type { Size } from "../../../shared/contracts";
 
 export const IMAGE_HEADER_BYTES = 512 * 1024;
 

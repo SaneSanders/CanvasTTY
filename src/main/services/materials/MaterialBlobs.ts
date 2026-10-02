@@ -1,13 +1,13 @@
-import { constants, createWriteStream } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { SHA256_PATTERN } from "./materialState.ts";
+import { READ_FILE_FLAGS } from "./materialText.ts";
 
 const TEMP_PREFIX = ".tmp-";
-const READ_FILE_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 type MaterialBlobErrorCode = "too-large" | "quota" | "unreadable";
 

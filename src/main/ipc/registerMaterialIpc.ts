@@ -1,16 +1,16 @@
 import { realpath, stat } from "node:fs/promises";
 import { BrowserWindow, clipboard, dialog, shell } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
-import type { MaterialsAddResult, Point } from "../../shared/contracts.ts";
-import { IPC } from "../../shared/contracts.ts";
+import type { MaterialsAddResult, Point } from "../../shared/contracts";
+import { IPC } from "../../shared/contracts";
 import type { MaterialService } from "../services/materials/MaterialService";
 import type { HandoffService } from "../services/materials/HandoffService";
-import { captureRejection, fileUrlPaths, plistPaths, textPaths, windowsFileNames } from "../services/materials/materialClipboard.ts";
-import { isId } from "../services/materials/materialState.ts";
+import { imageDimensions } from "../services/materials/imageDimensions";
+import { captureRejection, fileUrlPaths, plistPaths, textPaths, windowsFileNames } from "../services/materials/materialClipboard";
+import { isId } from "../services/materials/materialState";
+import { frameRect } from "../services/materials/pageCapture";
 import { assertMainRenderer } from "./registerIpc";
 import type { IpcRegistrar } from "./IpcReadinessGate";
-
-const MAX_CLIPBOARD_PATHS = 16;
 
 interface MaterialIpcDependencies {
   materials: MaterialService;
@@ -20,7 +20,6 @@ interface MaterialIpcDependencies {
 }
 
 export function registerMaterialIpc(ipcMain: IpcRegistrar, { materials, handoffs, workingDirectory, getMainWindow }: MaterialIpcDependencies): void {
-
   ipcMain.handle(IPC.materialsSnapshot, (event) => {
     assertMainRenderer(event, getMainWindow);
     return materials.snapshot();
@@ -71,26 +70,6 @@ export function registerMaterialIpc(ipcMain: IpcRegistrar, { materials, handoffs
     return materials.pinVersion(requireId(id));
   });
 
-  ipcMain.handle(IPC.materialsCaptureBrowser, (event, input: unknown) => {
-    assertMainRenderer(event, getMainWindow);
-    return materials.captureBrowser(input);
-  });
-
-  ipcMain.handle(IPC.materialsStartScenario, (event, input: unknown) => {
-    assertMainRenderer(event, getMainWindow);
-    return materials.startScenario(input);
-  });
-
-  ipcMain.handle(IPC.materialsAddScenarioStep, (event, id: unknown, step: unknown) => {
-    assertMainRenderer(event, getMainWindow);
-    return materials.addScenarioStep(requireId(id), step);
-  });
-
-  ipcMain.handle(IPC.materialsStopScenario, (event, id: unknown, reason: unknown) => {
-    assertMainRenderer(event, getMainWindow);
-    return materials.stopScenario(requireId(id), reason);
-  });
-
   ipcMain.handle(IPC.materialsReveal, (event, id: unknown) => {
     assertMainRenderer(event, getMainWindow);
     const location = materials.location(requireId(id));
@@ -134,10 +113,53 @@ export function registerMaterialIpc(ipcMain: IpcRegistrar, { materials, handoffs
     return handoffs.send(draft);
   });
 
+  ipcMain.handle(IPC.materialsCaptureBrowser, (event, input: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.captureBrowser(input);
+  });
+
+  ipcMain.handle(IPC.materialsCaptureFrame, async (event, input: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    const request = input as { materialId?: unknown; time?: unknown; rect?: unknown; point?: unknown } | null;
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const bounds = owner?.getContentBounds();
+    const rect = bounds ? frameRect(request?.rect, bounds, event.sender.getZoomFactor()) : null;
+    if (!owner || !rect || typeof request?.materialId !== "string") return { ok: false, reason: "unavailable" };
+    const image = await event.sender.capturePage(rect);
+    const png = image.isEmpty() ? null : image.toPNG();
+    const natural = png ? imageDimensions(png) : null;
+    if (!png || !natural) return { ok: false, reason: "unreadable" };
+    return materials.captureFrame(requireId(request.materialId), request.time, png, natural, request.point);
+  });
+
+  ipcMain.handle(IPC.materialsCapturePdfPage, (event, input: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.capturePdfPage(input);
+  });
+
+  ipcMain.handle(IPC.materialsStartScenario, (event, input: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.startScenario(input);
+  });
+
+  ipcMain.handle(IPC.materialsAddScenarioStep, (event, id: unknown, step: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.addScenarioStep(requireId(id), step);
+  });
+
+  ipcMain.handle(IPC.materialsStopScenario, (event, id: unknown, reason: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.stopScenario(requireId(id), reason);
+  });
 
   ipcMain.handle(IPC.materialsReadText, (event, id: unknown, versionId: unknown) => {
     assertMainRenderer(event, getMainWindow);
     return materials.readText(requireId(id), versionId === null ? null : requireId(versionId));
+  });
+
+  ipcMain.handle(IPC.materialsReadPdf, (event, id: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return materials.readPdf(requireId(id));
   });
 
   ipcMain.handle(IPC.materialsSaveText, (event, id: unknown, edit: unknown) => {

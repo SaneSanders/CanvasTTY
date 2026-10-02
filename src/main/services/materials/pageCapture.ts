@@ -8,12 +8,13 @@ import type {
   ScenarioStepKind,
   Size
 } from "../../../shared/contracts";
-import { isAreaAnchor, SCENARIO_TEXT_LIMIT } from "../../../shared/materials.ts";
+import { isAreaAnchor, PDF_PAGE_SHOT_MAX_BYTES, SCENARIO_TEXT_LIMIT } from "../../../shared/materials.ts";
 import { imageDimensions } from "./imageDimensions.ts";
-import { isFiniteNumber, MAX_ELEMENT_NAME, MAX_ELEMENT_ROLE, normalizeElements, STEP_KINDS } from "./materialState.ts";
+import { isFiniteNumber, isId, isPageNumber, MAX_ELEMENT_NAME, MAX_ELEMENT_ROLE, normalizeElements, STEP_KINDS } from "./materialState.ts";
 
 export const PAGE_SHOT_MAX_BYTES = 600 * 1024;
 export const AREA_ELEMENT_LIMIT = 8;
+
 
 const MAX_URL = 2_048;
 const MAX_TITLE = 300;
@@ -28,6 +29,22 @@ export interface ParsedShot {
 export interface ParsedStep extends Omit<ScenarioStepInput, "shot"> {
   shot: ParsedShot | null;
 }
+
+export interface FrameRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ParsedPdfPageCapture {
+  materialId: string;
+  page: number;
+  shot: ParsedShot;
+  point: Point;
+}
+
+export const FRAME_MIN_SIDE = 16;
 
 export function pageUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.length === 0 || value.length > MAX_URL) return null;
@@ -75,6 +92,13 @@ export function parseStartInput(value: unknown): ScenarioStartInput | null {
   return { url, title: pageTitle(value.title), viewport, point: finitePoint(value.point) };
 }
 
+export function parsePdfPageInput(value: unknown, maxBytes = PDF_PAGE_SHOT_MAX_BYTES): ParsedPdfPageCapture | null {
+  if (!isRecord(value) || !isId(value.materialId) || !isPageNumber(value.page)) return null;
+  const shot = parseShot(value.shot, maxBytes);
+  if (!shot) return null;
+  return { materialId: value.materialId, page: value.page, shot, point: finitePoint(value.point) };
+}
+
 export function parseStepInput(value: unknown): ParsedStep | null {
   if (!isRecord(value) || typeof value.kind !== "string" || !STEP_KINDS.has(value.kind as ScenarioStepKind)) return null;
   const kind = value.kind as ScenarioStepKind;
@@ -94,6 +118,17 @@ export function parseStepInput(value: unknown): ParsedStep | null {
     text: kind === "expectation" ? text : null,
     shot
   };
+}
+
+export function frameRect(value: unknown, bounds: Size, zoom: number): FrameRect | null {
+  if (!isRecord(value) || !(zoom > 0) || ![value.x, value.y, value.width, value.height].every(isFiniteNumber)) return null;
+  const x = value.x as number;
+  const y = value.y as number;
+  const left = Math.max(0, Math.floor(x * zoom));
+  const top = Math.max(0, Math.floor(y * zoom));
+  const right = Math.min(bounds.width, Math.ceil((x + (value.width as number)) * zoom));
+  const bottom = Math.min(bounds.height, Math.ceil((y + (value.height as number)) * zoom));
+  return right - left >= FRAME_MIN_SIDE && bottom - top >= FRAME_MIN_SIDE ? { x: left, y: top, width: right - left, height: bottom - top } : null;
 }
 
 export function elementsInArea(elements: readonly PageElement[], anchor: RemarkAnchor, viewport: Size): PageElement[] {

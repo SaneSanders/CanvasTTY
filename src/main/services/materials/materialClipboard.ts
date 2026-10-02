@@ -1,6 +1,6 @@
 import { isAbsolute, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { MaterialFailure, MaterialRejectionReason } from "../../../shared/contracts.ts";
+import type { MaterialFailure, MaterialRejectionReason } from "../../../shared/contracts";
 import { MATERIAL_LIMIT } from "../../../shared/materials.ts";
 
 export const CLIPBOARD_TEXT_PATH_LIMIT = 16;

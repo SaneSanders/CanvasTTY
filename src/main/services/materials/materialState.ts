@@ -423,6 +423,14 @@ export function normalizeOrigin(value: unknown): MaterialOrigin | null {
   if (value.kind === "watch" && typeof value.folderName === "string" && value.folderName.length <= MAX_NAME) {
     return { kind: "watch", folderName: value.folderName };
   }
+  if (value.kind === "pdf-page" && isId(value.sourceId) && typeof value.sourceName === "string" && value.sourceName.length <= MAX_NAME
+    && isPageNumber(value.page)) {
+    return { kind: "pdf-page", sourceId: value.sourceId, sourceName: value.sourceName, page: value.page };
+  }
+  if (value.kind === "frame" && isId(value.sourceId) && typeof value.sourceName === "string" && value.sourceName.length <= MAX_NAME
+    && isMediaTime(value.time)) {
+    return { kind: "frame", sourceId: value.sourceId, sourceName: value.sourceName, time: value.time };
+  }
   if (value.kind === "browser" && typeof value.url === "string" && value.url.length <= MAX_URL
     && typeof value.title === "string" && isSize(value.viewport)) {
     return {

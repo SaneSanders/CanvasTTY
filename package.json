@@ -7,7 +7,9 @@
   "author": "howdeploy",
   "license": "MIT",
   "homepage": "https://github.com/howdeploy/CanvasTTY",
-  "diagnostics": { "reportUrl": "https://canvastty.deploychan.webcam/canvastty/reports" },
+  "diagnostics": {
+    "reportUrl": "https://canvastty.deploychan.webcam/canvastty/reports"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/howdeploy/CanvasTTY.git"
@@ -71,6 +73,7 @@
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "node-gyp": "12.4.0",
+    "pdfjs-dist": "6.3.289",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "typescript": "7.0.2",

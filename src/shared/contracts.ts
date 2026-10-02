@@ -273,7 +273,9 @@ export interface PageElement {
 export type MaterialOrigin =
   | { kind: "clipboard" }
   | { kind: "browser"; url: string; title: string; viewport: Size; elements: PageElement[] }
-  | { kind: "watch"; folderName: string };
+  | { kind: "watch"; folderName: string }
+  | { kind: "frame"; sourceId: string; sourceName: string; time: number }
+  | { kind: "pdf-page"; sourceId: string; sourceName: string; page: number };
 
 export interface MaterialVersion {
   id: string;
@@ -338,6 +340,20 @@ export interface BrowserCaptureInput {
   title: string;
   viewport: Size;
   elements: PageElement[];
+  shot: PageShot;
+  point: Point;
+}
+
+export interface FrameCaptureInput {
+  materialId: string;
+  time: number;
+  rect: { x: number; y: number; width: number; height: number };
+  point: Point;
+}
+
+export interface PdfPageCaptureInput {
+  materialId: string;
+  page: number;
   shot: PageShot;
   point: Point;
 }
@@ -430,6 +446,8 @@ export type MaterialFailure =
 export type MaterialResult = { ok: true } | { ok: false; reason: MaterialFailure };
 
 export type MaterialTextResult = { ok: true; content: MaterialText } | { ok: false; reason: MaterialFailure };
+
+export type MaterialBytesResult = { ok: true; bytes: Uint8Array } | { ok: false; reason: MaterialFailure };
 
 export type MaterialSaveResult =
   | { ok: true; content: MaterialText; previous: MaterialVersion | null }
@@ -1915,10 +1933,13 @@ export interface CanvasTTYApi {
     sendHandoff(draft: HandoffDraft): Promise<HandoffResult>;
     pickResultsFolder(sessionId: string): Promise<string | null>;
     captureBrowser(input: BrowserCaptureInput): Promise<MaterialCreateResult>;
+    captureFrame(input: FrameCaptureInput): Promise<MaterialCreateResult>;
+    capturePdfPage(input: PdfPageCaptureInput): Promise<MaterialCreateResult>;
     startScenario(input: ScenarioStartInput): Promise<MaterialCreateResult>;
     addScenarioStep(id: string, step: ScenarioStepInput): Promise<MaterialResult>;
     stopScenario(id: string, reason: ScenarioStopReason): Promise<MaterialResult>;
     readText(id: string, versionId: string | null): Promise<MaterialTextResult>;
+    readPdf(id: string): Promise<MaterialBytesResult>;
     saveText(id: string, edit: MaterialTextSave): Promise<MaterialSaveResult>;
     readDraft(id: string): Promise<MaterialDraft | null>;
     writeDraft(id: string, edit: MaterialTextEdit): Promise<MaterialResult>;
@@ -2100,10 +2121,13 @@ export const IPC = {
   materialsSendHandoff: "materials:send-handoff",
   materialsPickResultsFolder: "materials:pick-results-folder",
   materialsCaptureBrowser: "materials:capture-browser",
+  materialsCaptureFrame: "materials:capture-frame",
+  materialsCapturePdfPage: "materials:capture-pdf-page",
   materialsStartScenario: "materials:start-scenario",
   materialsAddScenarioStep: "materials:add-scenario-step",
   materialsStopScenario: "materials:stop-scenario",
   materialsReadText: "materials:read-text",
+  materialsReadPdf: "materials:read-pdf",
   materialsSaveText: "materials:save-text",
   materialsReadDraft: "materials:read-draft",
   materialsWriteDraft: "materials:write-draft",

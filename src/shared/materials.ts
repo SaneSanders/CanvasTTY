@@ -3,17 +3,17 @@ import type { HandoffBlock, HandoffDraft, MaterialKind, Point, ProviderId, Remar
 export const MATERIAL_SCHEME = "canvastty-material";
 export const MATERIAL_LIMIT = 256;
 export const MATERIAL_VERSION_LIMIT = 20;
-export const MATERIAL_STORAGE_LIMIT = 1024 * 1024 * 1024;
-export const MATERIAL_VERSION_MAX_BYTES = 100 * 1024 * 1024;
+export const MATERIAL_MIN_SIZE: Size = { width: 220, height: 150 };
+export const MATERIAL_MAX_SIZE: Size = { width: 2_400, height: 1_800 };
+const MATERIAL_HEADER_HEIGHT = 54;
 export const REMARK_TEXT_LIMIT = 2_000;
 export const HANDOFF_NOTE_LIMIT = 4_000;
 export const SCENARIO_TEXT_LIMIT = 2_000;
 export const PAGE_ELEMENT_LIMIT = 200;
 export const SCENARIO_STEP_LIMIT = 30;
 export const SCENARIO_TIME_LIMIT_MS = 15 * 60 * 1000;
-export const MATERIAL_MIN_SIZE: Size = { width: 220, height: 150 };
-export const MATERIAL_MAX_SIZE: Size = { width: 2_400, height: 1_800 };
-export const MATERIAL_HEADER_HEIGHT = 54;
+export const PDF_BYTES_LIMIT = 100 * 1024 * 1024;
+export const PDF_PAGE_SHOT_MAX_BYTES = 8 * 1024 * 1024;
 
 const IMAGE_BOX: Size = { width: 440, height: 440 };
 const GRID_GAP = 24;
@@ -26,12 +26,12 @@ const DEFAULT_SIZES: Record<MaterialKind, Size> = {
   text: { width: 520, height: 400 },
   video: { width: 560, height: 380 },
   audio: { width: 420, height: 170 },
-  pdf: { width: 360, height: 230 },
+  pdf: { width: 480, height: 620 },
   file: { width: 360, height: 230 },
   scenario: { width: 460, height: 580 }
 };
 
-export interface MaterialType {
+interface MaterialType {
   kind: MaterialKind;
   mimeType: string;
 }
@@ -150,15 +150,6 @@ export function materialType(name: string): MaterialType {
   return { kind: "file", mimeType: "application/octet-stream" };
 }
 
-export function materialUrl(id: string, versionId: string | null, revision = 0): string {
-  const base = `${MATERIAL_SCHEME}://${encodeURIComponent(id)}/`;
-  return versionId === null ? `${base}live?r=${revision}` : `${base}v/${encodeURIComponent(versionId)}`;
-}
-
-export function materialStepUrl(id: string, index: number): string {
-  return `${MATERIAL_SCHEME}://${encodeURIComponent(id)}/step/${index}`;
-}
-
 export function freeSpotBelow(point: Point, size: Size, occupied: readonly SessionBounds[]): Point {
   let y = point.y;
   for (let attempt = 0; attempt <= occupied.length; attempt += 1) {
@@ -187,6 +178,54 @@ export function spotBeside(anchor: SessionBounds, size: Size, occupied: readonly
     if (shown(spot)) return spot;
   }
   return bases[0];
+}
+
+export function handoffBlockFor(session: SessionMetadata, launchPending = false): HandoffBlock | null {
+  if (session.provider === "terminal") return "not-an-agent";
+  if (session.exitCode !== null || session.status === "done" || session.status === "failed") return "exited";
+  if (launchPending) return "starting";
+  if (session.status === "working") return "busy";
+  if (session.status === "needs_approval") return "needs-approval";
+  if (session.environment) return "remote-environment";
+  return null;
+}
+
+export function handoffAttachesImages(provider: ProviderId): boolean {
+  return provider === "claude" || provider === "codex";
+}
+
+export function handoffDraftKey(draft: HandoffDraft): string {
+  return JSON.stringify({
+    id: draft.id,
+    sessionId: draft.sessionId,
+    remarkIds: [...draft.remarkIds].sort(),
+    editableMaterialIds: [...draft.editableMaterialIds].sort(),
+    note: draft.note,
+    resultsFolder: draft.resultsFolder
+  });
+}
+
+export function isAreaAnchor(anchor: RemarkAnchor): anchor is Extract<RemarkAnchor, { kind: "region" | "point" }> {
+  return anchor.kind === "region" || anchor.kind === "point";
+}
+
+export function formatClock(seconds: number): string {
+  const tenths = Math.round(Math.max(0, seconds) * 10);
+  const hours = Math.floor(tenths / 36_000);
+  const minutes = Math.floor((tenths % 36_000) / 600);
+  const whole = Math.floor((tenths % 600) / 10);
+  const fraction = tenths % 10;
+  const rest = `${String(whole).padStart(2, "0")}${fraction ? `.${fraction}` : ""}`;
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
+}
+
+export function materialStepUrl(id: string, index: number): string {
+  return `${MATERIAL_SCHEME}://${encodeURIComponent(id)}/step/${index}`;
+}
+
+export function materialUrl(id: string, versionId: string | null, revision = 0): string {
+  const base = `${MATERIAL_SCHEME}://${encodeURIComponent(id)}/`;
+  return versionId === null ? `${base}live?r=${revision}` : `${base}v/${encodeURIComponent(versionId)}`;
 }
 
 export function materialCardSize(kind: MaterialKind, natural: Size | null): Size {
@@ -237,43 +276,4 @@ export function clampSize(size: Size): Size {
     width: Math.min(MATERIAL_MAX_SIZE.width, Math.max(MATERIAL_MIN_SIZE.width, size.width)),
     height: Math.min(MATERIAL_MAX_SIZE.height, Math.max(MATERIAL_MIN_SIZE.height, size.height))
   };
-}
-
-export function handoffBlockFor(session: SessionMetadata, launchPending = false): HandoffBlock | null {
-  if (session.provider === "terminal") return "not-an-agent";
-  if (session.exitCode !== null || session.status === "done" || session.status === "failed") return "exited";
-  if (launchPending) return "starting";
-  if (session.status === "working") return "busy";
-  if (session.status === "needs_approval") return "needs-approval";
-  if (session.environment) return "remote-environment";
-  return null;
-}
-
-export function handoffAttachesImages(provider: ProviderId): boolean {
-  return provider === "claude" || provider === "codex";
-}
-
-export function handoffDraftKey(draft: HandoffDraft): string {
-  return JSON.stringify({
-    id: draft.id,
-    sessionId: draft.sessionId,
-    remarkIds: [...draft.remarkIds].sort(),
-    editableMaterialIds: [...draft.editableMaterialIds].sort(),
-    note: draft.note,
-    resultsFolder: draft.resultsFolder
-  });
-}
-
-export function formatClock(seconds: number): string {
-  const tenths = Math.round(Math.max(0, seconds) * 10);
-  const hours = Math.floor(tenths / 36_000);
-  const minutes = Math.floor((tenths % 36_000) / 600);
-  const whole = Math.floor((tenths % 600) / 10);
-  const fraction = tenths % 10;
-  const rest = `${String(whole).padStart(2, "0")}${fraction ? `.${fraction}` : ""}`;
-  return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
-}
-
-export function isAreaAnchor(anchor: RemarkAnchor): anchor is Extract<RemarkAnchor, { kind: "region" | "point" }> {
-  return anchor.kind === "region" || anchor.kind === "point";
 }

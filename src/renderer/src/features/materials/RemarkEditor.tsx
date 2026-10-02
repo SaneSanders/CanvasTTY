@@ -8,6 +8,7 @@ import { remarkAnchorKey, remarkAnchorLabel } from "./materialRemarksModel";
 interface RemarkEditorProps {
   locale: LocaleId;
   anchor: RemarkAnchor;
+  recording?: boolean;
   referenceName: string | null;
   picking: boolean;
   onPickReference(): void;
@@ -19,6 +20,7 @@ interface RemarkEditorProps {
 export function RemarkEditor({
   locale,
   anchor,
+  recording = false,
   referenceName,
   picking,
   onPickReference,
@@ -56,7 +58,7 @@ export function RemarkEditor({
         void save();
       }}
     >
-      <span className="material-remark-editor__anchor">{remarkAnchorLabel(anchor, locale)}</span>
+      <span className="material-remark-editor__anchor">{remarkAnchorLabel(anchor, locale, recording)}</span>
       <textarea
         ref={input}
         value={text}
@@ -121,12 +123,13 @@ export function RemarkDrawHint({
   );
 }
 
-function drawHintKey(kind: MaterialKind): "remarkDrawLinesHint" | "remarkDrawTimeHint" | "remarkDrawPageHint" | "remarkDrawHint" {
+function drawHintKey(kind: MaterialKind): "remarkDrawLinesHint" | "remarkDrawTimeHint" | "remarkDrawPageHint" | "remarkDrawStepHint" | "remarkDrawHint" {
   switch (kind) {
     case "text": return "remarkDrawLinesHint";
     case "video":
     case "audio": return "remarkDrawTimeHint";
     case "pdf": return "remarkDrawPageHint";
+    case "scenario": return "remarkDrawStepHint";
     default: return "remarkDrawHint";
   }
 }

@@ -1626,7 +1626,7 @@ export function App(): React.JSX.Element {
           onMaterialBoundsChangeBatch={materials.setBoundsBatch}
           onRemoveMaterial={removeMaterial}
           onMaterialCommand={runMaterialCommand}
-          remarks={materials.remarks}
+          remarks={materials.snapshot.remarks}
           handoffs={materials.snapshot.handoffs}
           onAddRemark={addRemark}
           onRemarkAction={remarkAction}
@@ -1702,7 +1702,7 @@ export function App(): React.JSX.Element {
           initialRemarkIds={handoffRemarkIds}
           sessions={sessions}
           materials={materials.materials}
-          remarks={materials.remarks}
+          remarks={materials.snapshot.remarks}
           handoffs={materials.snapshot.handoffs}
           lastSessionId={lastHandoffSessionId}
           onClose={() => setHandoffRemarkIds(null)}

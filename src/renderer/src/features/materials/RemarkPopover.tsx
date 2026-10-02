@@ -49,6 +49,7 @@ export function RemarkPopover({
           key={remarkDraft.materialId}
           locale={locale}
           anchor={remarkDraft.anchor}
+          recording={material.kind === "scenario"}
           referenceName={remarkDraft.reference ? materialNames.get(remarkDraft.reference.materialId) ?? null : null}
           picking={remarkDraft.picking}
           onPickReference={remarkActions.pickReference}

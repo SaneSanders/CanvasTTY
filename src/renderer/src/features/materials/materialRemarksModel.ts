@@ -10,8 +10,8 @@ import type {
   RemarkAnchor,
   RemarkStatus,
   Size
-} from "../../../../shared/contracts.ts";
-import { isAreaAnchor } from "../../../../shared/materials.ts";
+} from "../../../../shared/contracts";
+import { formatClock, isAreaAnchor } from "../../../../shared/materials.ts";
 import { t } from "../../lib/i18n.ts";
 
 export interface BoxRect {
@@ -83,15 +83,15 @@ export function remarkStatusClass(status: RemarkStatus): string {
   return `material-remark-status material-remark-status--${status}`;
 }
 
-export function remarkAnchorLabel(anchor: RemarkAnchor, locale: LocaleId): string {
+export function remarkAnchorLabel(anchor: RemarkAnchor, locale: LocaleId, recording = false): string {
   switch (anchor.kind) {
     case "lines": return `${t(locale, "remarkAnchorLines")} ${anchor.start === anchor.end ? anchor.start : `${anchor.start}–${anchor.end}`}`;
     case "page": return `${t(locale, "remarkAnchorPage")} ${anchor.page}`;
     case "time": return `${t(locale, "remarkAnchorTime")} ${anchor.end === null ? formatClock(anchor.start) : `${formatClock(anchor.start)}–${formatClock(anchor.end)}`}`;
+    case "step": return `${t(locale, "remarkAnchorStep")} ${anchor.index + 1}`;
     case "region": return t(locale, "remarkAnchorRegion");
     case "point": return t(locale, "remarkAnchorPoint");
-    case "step": return t(locale, "remarkAnchorStep");
-    case "whole": return t(locale, "remarkAnchorWhole");
+    case "whole": return t(locale, recording ? "remarkAnchorRecording" : "remarkAnchorWhole");
   }
 }
 
@@ -180,16 +180,6 @@ export function handoffReasonKey(reason: HandoffBlock | MaterialFailure): Handof
     case "too-long": return "handoffBlockTooLong";
     default: return "handoffBlockUnavailable";
   }
-}
-
-function formatClock(seconds: number): string {
-  const tenths = Math.round(Math.max(0, seconds) * 10);
-  const hours = Math.floor(tenths / 36_000);
-  const minutes = Math.floor((tenths % 36_000) / 600);
-  const whole = Math.floor((tenths % 600) / 10);
-  const fraction = tenths % 10;
-  const rest = `${String(whole).padStart(2, "0")}${fraction ? `.${fraction}` : ""}`;
-  return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
 }
 
 function round(value: number): number {

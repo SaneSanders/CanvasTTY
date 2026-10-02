@@ -374,11 +374,24 @@ export class MaterialService {
       const next = decodeText(bytes);
       if (!next) return failure("not-text");
       if (next.hash === current.content.hash) {
-        if (this.dropDraft(id)) this.changed(false);
+        let existed: boolean;
+        try {
+          existed = await this.dropDraftStrict(id);
+        } catch {
+          return failure("write-failed");
+        }
+        if (existed) this.changed(false);
         return { ok: true, content: current.content, previous: null };
       }
       const kept = await this.createVersion(id, "edit");
       if (!kept.ok && !allowsUnversioned(edit)) return kept;
+      if (kept.ok) {
+        try {
+          await this.writeState(true);
+        } catch {
+          return failure("write-failed");
+        }
+      }
       const latest = await this.readLiveText(material.path);
       if (!latest.ok) return latest;
       if (latest.content.hash !== parsed.baseHash) return { ok: false, reason: "conflict", current: latest.content };
@@ -387,7 +400,11 @@ export class MaterialService {
       } catch {
         return failure("write-failed");
       }
-      this.dropDraft(id);
+      try {
+        await this.dropDraftStrict(id);
+      } catch {
+        return failure("write-failed");
+      }
       await this.refreshLive(material, true);
       this.changed();
       return { ok: true, content: next, previous: kept.ok ? kept.version : null };
@@ -402,10 +419,12 @@ export class MaterialService {
   writeDraft(id: string, edit: unknown): Promise<MaterialResult> {
     const material = this.materials.get(id);
     if (!material || material.kind !== "text" || material.path === null) return Promise.resolve(failure("unavailable"));
-    const parsed = parseTextEdit(edit);
-    if (!parsed) return Promise.resolve(failure(tooLargeEdit(edit) ? "too-large" : "unavailable"));
+    const parsed = parseTextEdit(edit, DRAFT_FILE_LIMIT);
+    if (!parsed) return Promise.resolve(failure(tooLargeEdit(edit, DRAFT_FILE_LIMIT) ? "too-large" : "unavailable"));
+    const candidate = { ...parsed, updatedAt: this.now() };
+    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") > DRAFT_FILE_LIMIT) return Promise.resolve(failure("too-large"));
     const previous = this.drafts.get(id);
-    this.drafts.set(id, { ...parsed, updatedAt: this.now() });
+    this.drafts.set(id, candidate);
     if (previous?.baseHash !== parsed.baseHash) this.changed(false);
     return this.persistDraft(id);
   }
@@ -979,7 +998,11 @@ export class MaterialService {
       await mkdir(this.root, { recursive: true, mode: 0o700 });
       await writeFile(temporary, snapshot, { encoding: "utf8", mode: 0o600, flush: true });
       await rename(temporary, this.statePath);
-      if (!persist) await rm(this.draftsPath, { recursive: true, force: true });
+      if (!persist) {
+        const cleanup = this.draftQueue.catch(() => undefined).then(() => rm(this.draftsPath, { recursive: true, force: true }));
+        this.draftQueue = cleanup.catch(() => undefined);
+        await cleanup;
+      }
     });
     this.writeQueue = write.catch((error) => {
       console.warn("CanvasTTY materials could not be saved.", error);
@@ -1014,7 +1037,7 @@ export class MaterialService {
       const file = join(this.draftsPath, entry);
       const read = material?.kind === "text" && material.path !== null ? await readBounded(file, DRAFT_FILE_LIMIT) : null;
       const value = read?.ok ? parseJson(read.bytes.toString("utf8")) : null;
-      const edit = parseTextEdit(value);
+      const edit = parseTextEdit(value, DRAFT_FILE_LIMIT);
       const updatedAt = (value as { updatedAt?: unknown } | null)?.updatedAt;
       if (!edit || typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
         await rm(file, { force: true }).catch(() => undefined);
@@ -1030,7 +1053,7 @@ export class MaterialService {
     const file = join(this.draftsPath, `${id}.json`);
     const snapshot = JSON.stringify(draft);
     const write = this.draftQueue.catch(() => undefined).then(async (): Promise<MaterialResult> => {
-      if (this.drafts.get(id) !== draft) return { ok: true };
+      if (this.drafts.get(id) !== draft || !this.options.persist()) return { ok: true };
       await mkdir(this.draftsPath, { recursive: true, mode: 0o700 });
       const temporary = `${file}.tmp`;
       await writeFile(temporary, snapshot, { encoding: "utf8", mode: 0o600, flush: true });
@@ -1049,6 +1072,16 @@ export class MaterialService {
     if (!isId(id) || !this.writable) return existed;
     const file = join(this.draftsPath, `${id}.json`);
     this.draftQueue = this.draftQueue.catch(() => undefined).then(() => rm(file, { force: true })).catch(() => undefined);
+    return existed;
+  }
+
+  private async dropDraftStrict(id: string): Promise<boolean> {
+    const existed = this.drafts.delete(id);
+    if (!isId(id) || !this.writable) return existed;
+    const file = join(this.draftsPath, `${id}.json`);
+    const removal = this.draftQueue.catch(() => undefined).then(() => rm(file, { force: true }));
+    this.draftQueue = removal.catch(() => undefined);
+    await removal;
     return existed;
   }
 
@@ -1203,9 +1236,9 @@ function remarkTransitionAllowed(from: MaterialRemark["status"], to: NonNullable
   return from === "reopened";
 }
 
-function tooLargeEdit(edit: unknown): boolean {
+function tooLargeEdit(edit: unknown, limit = TEXT_EDIT_LIMIT): boolean {
   const text = (edit as { text?: unknown } | null)?.text;
-  return typeof text === "string" && Buffer.byteLength(text, "utf8") > TEXT_EDIT_LIMIT;
+  return typeof text === "string" && Buffer.byteLength(text, "utf8") > limit;
 }
 
 function allowsUnversioned(edit: unknown): boolean {

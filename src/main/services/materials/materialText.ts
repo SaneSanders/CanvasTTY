@@ -41,11 +41,11 @@ export function encodeText(text: string, eol: MaterialText["eol"], bom: boolean)
   return bom ? Buffer.concat([UTF8_BOM, body]) : body;
 }
 
-export function parseTextEdit(value: unknown): MaterialTextEdit | null {
+export function parseTextEdit(value: unknown, limit = TEXT_EDIT_LIMIT): MaterialTextEdit | null {
   if (!value || typeof value !== "object") return null;
   const { baseHash, text } = value as Partial<MaterialTextEdit>;
   if (typeof baseHash !== "string" || !SHA256_PATTERN.test(baseHash) || typeof text !== "string") return null;
-  if (Buffer.byteLength(text, "utf8") > TEXT_EDIT_LIMIT) return null;
+  if (Buffer.byteLength(text, "utf8") > limit) return null;
   return { baseHash, text };
 }
 

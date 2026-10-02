@@ -73,6 +73,7 @@ export function TextMaterialBody({
   onPendingTextRef.current = onPendingText;
   const draftTimer = useRef<number | null>(null);
   const pending = useRef<{ baseHash: string; text: string } | null>(null);
+  const draftGeneration = useRef(0);
   const scrolledTo = useRef<string | null>(null);
   liveRef.current = live;
 
@@ -82,7 +83,7 @@ export function TextMaterialBody({
   const drawing = remarking.mode === "draw" || remarking.mode === "pick";
 
   useEffect(() => {
-    onPendingTextRef.current?.(state === "draft");
+    onPendingTextRef.current?.(state === "draft" || state === "conflict");
   }, [state]);
 
   useEffect(() => {
@@ -108,8 +109,12 @@ export function TextMaterialBody({
       void window.canvasTTY.materials.discardDraft(material.id);
       return;
     }
+    const generation = (draftGeneration.current += 1);
     void window.canvasTTY.materials.writeDraft(material.id, next).then((result) => {
-      if (!result.ok) setNotice({ kind: "failed", reason: result.reason });
+      if (!result.ok) {
+        if (draftGeneration.current === generation) pending.current = next;
+        setNotice({ kind: "failed", reason: result.reason });
+      }
     });
   };
   const flushDraftRef = useRef(flushDraft);
@@ -145,6 +150,7 @@ export function TextMaterialBody({
     if (!next) return;
     if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
     draftTimer.current = null;
+    draftGeneration.current += 1;
     pending.current = null;
     void window.canvasTTY.materials.discardDraft(material.id);
     setBaseHash(next.baseHash);
@@ -186,6 +192,7 @@ export function TextMaterialBody({
     if (baseHash === null) return;
     setDraftText(text);
     setNotice(null);
+    draftGeneration.current += 1;
     pending.current = { baseHash, text };
     if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
     draftTimer.current = window.setTimeout(() => flushDraftRef.current(), DRAFT_SAVE_DELAY_MS);
@@ -194,6 +201,7 @@ export function TextMaterialBody({
   const resetToDisk = (): void => {
     if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
     draftTimer.current = null;
+    draftGeneration.current += 1;
     pending.current = null;
     void window.canvasTTY.materials.discardDraft(material.id);
     if (live) {
@@ -209,6 +217,7 @@ export function TextMaterialBody({
     if (draftText === null || baseHash === null || saving) return;
     if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
     draftTimer.current = null;
+    draftGeneration.current += 1;
     pending.current = null;
     const expected = againstHash ?? baseHash;
     setSaving(true);
@@ -221,16 +230,20 @@ export function TextMaterialBody({
         setBaseText(result.content.text);
         setShowingDiff(false);
         setNotice({ kind: "saved", kept: result.previous !== null || result.content.hash === expected });
-      } else if (result.reason === "conflict") {
-        setLive(result.current);
+      } else {
         pending.current = { baseHash, text: draftText };
         flushDraftRef.current();
-      } else if (result.reason === "quota" || result.reason === "version-limit") {
-        setNotice({ kind: "unkept", reason: result.reason });
-      } else {
-        setNotice({ kind: "failed", reason: result.reason });
+        if (result.reason === "conflict") {
+          setLive(result.current);
+        } else if (result.reason === "quota" || result.reason === "version-limit") {
+          setNotice({ kind: "unkept", reason: result.reason });
+        } else {
+          setNotice({ kind: "failed", reason: result.reason });
+        }
       }
     } catch {
+      pending.current = { baseHash, text: draftText };
+      flushDraftRef.current();
       setNotice({ kind: "failed", reason: "write-failed" });
     } finally {
       setSaving(false);
@@ -330,7 +343,7 @@ export function TextMaterialBody({
         <div className="material-text__banner" role="status">
           <span>{t(locale, "materialTextDraftBanner")}</span>
           <button type="button" onClick={() => onEditingChange(true)}><UiIcon name="pencil" size="1em" />{t(locale, "materialTextContinue")}</button>
-          <button type="button" onClick={() => void window.canvasTTY.materials.discardDraft(material.id)}>{t(locale, "materialTextDiscard")}</button>
+          <button type="button" onClick={() => { draftGeneration.current += 1; pending.current = null; void window.canvasTTY.materials.discardDraft(material.id); }}>{t(locale, "materialTextDiscard")}</button>
         </div>
       )}
       <div

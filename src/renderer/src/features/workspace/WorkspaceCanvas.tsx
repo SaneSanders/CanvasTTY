@@ -1180,7 +1180,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
               captureCanvasWheelOverWidgets={routeWidgetWheelToCanvas || widgetFocus.id !== terminalCanvasWidgetId(session.id)}
               focused={widgetFocus.id === terminalCanvasWidgetId(session.id)}
               focusChangeSource={widgetFocus.source}
-              focusRevision={widgetFocus.id === terminalCanvasWidgetId(session.id) ? 1 : 0}
+              focusRevision={widgetFocus.id === terminalCanvasWidgetId(session.id) ? widgetFocus.revision : 0}
               selected={activeSessionId === session.id}
               forceMasterDetail={masterPixelSkinSessionIds.has(session.id)}
               groupSelected={marqueeSelection.has(terminalLayerId(session.id))}
@@ -1336,7 +1336,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
               captureCanvasWheelOverWidgets={false}
               focused={widgetFocus.id === terminalCanvasWidgetId(session.id)}
               focusChangeSource={widgetFocus.source}
-              focusRevision={widgetFocus.id === terminalCanvasWidgetId(session.id) ? 1 : 0}
+              focusRevision={widgetFocus.id === terminalCanvasWidgetId(session.id) ? widgetFocus.revision : 0}
               selected={activeSessionId === session.id}
               forceMasterDetail={true}
               groupSelected={false}

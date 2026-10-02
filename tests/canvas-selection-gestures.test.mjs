@@ -41,11 +41,13 @@ function press(overrides = {}) {
   };
 }
 
-/** Does the exported control selector cover this element? Simple tag and class parts only. */
-function selectorCovers({ tag, className = "" }) {
+/** Does the exported control selector cover this element? Simple tag, class and [attr] parts only. */
+function selectorCovers({ tag, className = "", attributes = {} }) {
   return CANVAS_CARD_CONTROL_SELECTOR.split(",").some((part) => {
     const selector = part.trim();
-    return selector.startsWith(".") ? className === selector.slice(1) : tag === selector;
+    if (selector.startsWith(".")) return className === selector.slice(1);
+    const attribute = selector.match(/^\[([^\]]+)\]$/)?.[1];
+    return attribute ? attribute in attributes : tag === selector;
   });
 }
 
@@ -226,6 +228,12 @@ test("media players on material cards are controls, so pressing play never ancho
   assert.equal(selectorCovers({ tag: "img" }), false, "an image body stays a drag surface");
 });
 
-test("the text of a material card is selected with the pointer, never dragged as a group", () => {
-  assert.equal(selectorCovers({ tag: "div", className: "material-text__scroller" }), true);
+test("the text of a material card is selected with the pointer, never dragged as a group", async () => {
+  assert.equal(selectorCovers({ tag: "div", attributes: { "data-canvas-card-control": "true" } }), true);
+  assert.equal(selectorCovers({ tag: "div", className: "material-text__scroller" }), false, "classes no longer mark card controls");
+  const { readFile } = await import("node:fs/promises");
+  const text = await readFile(new URL("../src/renderer/src/features/materials/TextMaterialBody.tsx", import.meta.url), "utf8");
+  const pdf = await readFile(new URL("../src/renderer/src/features/materials/PdfMaterialBody.tsx", import.meta.url), "utf8");
+  const annotator = await readFile(new URL("../src/renderer/src/features/materials/ImageAnnotator.tsx", import.meta.url), "utf8");
+  for (const source of [text, pdf, annotator]) assert.match(source, /data-canvas-card-control/);
 });

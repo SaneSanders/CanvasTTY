@@ -33,8 +33,12 @@ Electron main process
     ├── PluginSecretsService → 操作系统保护的插件凭据加密与 fail-closed 可用性
     ├── PluginMediaService → 用户授权媒体目录、ranged audio stream、playlist
     ├── BrowserService → 内置 tab 与隔离 WebContentsView lifecycle
+    ├── MaterialService → 画布素材：按 realpath 授权、实时状态、版本、批注、草稿、场景
+    │   └── MaterialBlobs → 共享配额下按内容寻址的版本与截图 blob
+    ├── HandoffService / HandoffResults → 交接包、经校验的粘贴投递、turn 追踪、结果目录
     ├── canvastty-plugin:// → 受 CSP 限制的静态 plugin resource
     ├── canvastty-media:// → 权限检查后的本地音频流
+    ├── canvastty-material:// → 素材、版本与场景步骤的只读流
     └── 原生 dialog/window control
 ```
 
@@ -62,6 +66,24 @@ Runtime 插件代码绝不会导入主进程或可信 renderer bundle。HOME wid
 
 内置浏览器跨两个界面分工：`BrowserCard` 渲染可信的外层 window chrome、tab、navigation、agent badge、download、dialog 与 canvas geometry；`BrowserService` 把活动 native view 定位到卡片测量出的 viewport 上。卡片或 camera 移动时 native view 保持实时渲染，并按帧合并 geometry 更新；仅在 semantic summary、编辑 HOME 或可信 modal 后方隐藏。Fractional renderer bounds 扩展到完整覆盖的 device-independent pixel；只有活动 tab 实际变化时才重新挂接 view。Typed pointer bridge 把 native page 的 click/hover activity 返回 canvas selection，并显式恢复页面焦点而不阻止页面输入。仅连接或 heartbeat 不会创建 presence：实际 browser command 后才显示 badge，获得真实 pointer position 后才显示 cursor。
 
+## 素材、批注与交接
+
+素材是画布上本地文件与截图的卡片。`src/main/services/materials/MaterialService.ts` 拥有素材、版本、批注与草稿；`HandoffService.ts` 构建并投递交接包；`HandoffResults.ts` 监视结果目录并读取 `canvastty-report-<n>.json`。renderer 只能看到 ID、显示路径与 `src/renderer/src/features/materials/*` 中的类型化结果。共享常量与限制在 `src/shared/materials.ts`。文件与版本的字节只通过 `canvastty-material://` 只读提供，支持 HTTP Range、`no-store` 与 `nosniff`。
+
+状态仅在开启 **退出后保存素材** 时写入 `userData/materials/state.json`（`0600`、原子写入、debounce）；文本草稿是 `userData/materials/drafts/` 下独立的 `0600` 文件。若 `state.json` 无法解析，会被移到 `state.json.broken-<timestamp>` 并以空状态启动。版本是 `userData/materials/versions/` 下按内容寻址的 blob：总配额 1 GB，单个版本最多 256 MB，单次截图最多 32 MB，每个素材最多 20 个版本。大于 256 MB 的视频/音频会返回明确错误，不会生成版本。被固定的版本不会被清理；否则超出限制时最旧的无引用版本会被静默淘汰，而当无可淘汰时，操作会返回明确的 `version-limit` 错误。交接包位于 `userData/materials/handoffs/<id>/`：最多 50 个文件夹，单个包最多 512 MB，总计最多 1 GB，在启动和每次发送后清理。关闭 **退出后保存素材** 会在启动和退出时清除 `versions/` 与 `handoffs/`，并写入空状态。
+
+拖入、选择或粘贴的文件成为针对其 realpath 的授权。每次读取都以 `O_NOFOLLOW | O_NONBLOCK` 重新打开文件，要求是普通文件，并在路径已指向别处时拒绝。文件身份是 `stat` 中的 `dev`/`ino`。相同内容即使 `mtime`/`ino` 改变也仍是当前版本；仅改变大小写的重命名会在确认同一 inode 且排除 symlink 后提示为“已移动”。交接结果目录每次扫描都会解析为 realpath，若 realpath 不可读则退回最近一次已知路径，并在窗口结束后十分钟或应用退出时停止监视。移除卡片不会触碰原文件；其固定版本以及仅存在于 CanvasTTY 中的截图会随之删除。文本编辑仅在磁盘哈希仍等于编辑基准时保存（compare-and-swap），通过同目录临时文件与 rename 完成，并保留文件权限、换行符与 BOM；被替换的内容保留为一个版本。
+
+查看文件时绝不以应用权限执行其内容。图片、视频与音频经 `canvastty-material://` 提供。文本按 UTF-8 解码并作为纯文本渲染。PDF 字节在 main 中经 IPC 读取，由 pdf.js 在 worker 中解析，禁用脚本、XFA 与 WebAssembly。
+
+批注固定其针对的确切版本与锚点：图片上的 `point`/`region`、文本中的 `lines`、视频/音频中的 `time`/`span`、PDF 的 `page`，或场景中的 `step`，也可以是整个素材 `whole`。批注最多 2000 条，每条不超过 2000 字符。文本摘录附带行号。批注可引用另一素材，两侧都会校验。`reported` 只来自 agent 的报告文件，`accepted` 只来自人。更新通过 `MaterialService` 的串行队列原子完成。
+
+交接通过 `TerminalManager.deliverInput` 以 bracketed paste 送入现有终端会话。只有 Claude Code 与 Codex 拥有已验证的粘贴契约：它们的文本与图片路径会先由 headless xterm 镜像确认，再按下 Enter，或者由所选结果目录中的 `canvastty-report-<n>.json` 确认。其他 agent 只收到文本、不会按 Enter，结果为 `pasted`，并注明 `not-observed`、`not-seen` 或 `enter-failed` 之一。向正在发送的会话再次发送会被拒绝为 `busy`，而重复使用同一交接 id 会被拒绝为 `already-sent`。组合文本会去除终端控制字符，完整文本始终写入交接包的 `handoff.md`。Turn 的开始与结束只取自同一次会话运行的 lifecycle 状态；投递不代表 agent 已阅读或完成任何内容。
+
+可选的结果目录会在交接的 turn 时间窗内被监视。新文件成为结果卡片，`canvastty-report-<n>.json` 可将批注标记为 `reported`。只有当恰好一个交接的时间窗能解释该变更时，文件才归属于该交接；否则来源显示为未知。
+
+页面截取与场景录制只使用 renderer 的公开浏览器 API：`browser_screenshot`、`browser_observe`、`getState` 与 `onState`。截取区域以 `BrowserCard` 渲染的 `.browser-card__viewport` 为基准。其 UI 位于 Browser 卡片之外。录制由用户显式开始与停止，上限为 30 步或 15 分钟，仅限开始时的标签页，不记录按键，URL 去掉 query 与 fragment。保存前 URL 会被 sanitised：高熵路径段替换为 `…`。密码字段由浏览器核心掩码，但普通表单文本在截图中可见。renderer 重载后仍然存活的录制（例如页面重载后）会由 main 的定时器以 `limit` 结果关闭。视频帧从可见视频区域截取后交给 `captureFrame`。
+
 ## Renderer 边界
 
 `App.tsx` 是编排边界。它加载 settings/session，订阅主进程事件，并协调 dialog 与持久化。Feature component 不调用无关 feature 的 API。
@@ -74,7 +96,10 @@ App
 │   │   └── HomeMediaWidget 独立的 pick/replace/remove control
 │   ├── TerminalCard       xterm、selection、rename、drag、resize、snap
 │   ├── PluginCanvasCard   带 bounds 与 summary 的 sandbox plugin app
+│   ├── MaterialCard       文件、截取与场景卡片：带批注的 image、text、media、PDF 与 scenario body
 │   └── BrowserCard        可信 browser chrome 与 native view geometry
+├── HandoffDialog          接收方、批注、文件、精确预览与投递结果
+├── CompareDialog          前后图片或逐行 diff，然后接受或退回
 ├── AgentLaunchDialog      固定 provider + folder + profile + launch
 └── SettingsPanel          General、Appearance、Controls、Plugins
     └── PluginSettingsSection preview、permissions、registry、contribution
@@ -117,6 +142,7 @@ Session counter、progress bar 与 status 必须来自真实 `SessionSnapshot`�
 - 新增 provider 时，在 `ProviderId`、`providers.ts`、`TerminalManager.resolveLaunch`、官方 provider asset map 和可选的安全 limit adapter 中添加。
 - 新增持久化 setting 时，在 `AppSettings`、`SettingsStore` defaults/normalization 与唯一归属 feature 中添加。Settings 负责面向用户的 canvas control 与 shortcut；camera math 和 snapping geometry 保持为纯 renderer concern。
 - 新增 canvas entity 时，使用独立 feature component，声明明确 position 与 callback；camera ownership 保留在 `WorkspaceCanvas`。
+- 新增素材种类时，先在 `src/shared/contracts.ts` 扩展 `MaterialKind`，再在 `src/main/services/materials/materialState.ts` 的 `KINDS` Record 中添加该种类（TypeScript 会强制要求补齐）。接着在 `normalizeMaterial` 中添加规范化，在 `src/shared/materials.ts` 的 `materialType` 与 `DEFAULT_SIZES` 中添加映射，在 `anchorFits` 与 `remarkAnchorLabel` 中补全 switch，在 `src/main/services/materials/handoffText.ts` 的 `describeAnchor` 中添加描述文本，并在 `src/renderer/src/features/materials/` 的 `MaterialCard` 中添加 body 组件。
 - 发布 runtime extension 时，使用 `canvastty.plugin.json` API v1 与静态 HTML/CSS/JS entry。Contribution kind 为 `home-widget`、`canvas-app`、`window`；capability access 受 manifest permission 限制。参见[运行时插件](plugins.zh-CN.md)。
 
 每项扩展都应通过 `npm run typecheck`、`npm run build`，并在真实 Electron 中完成交互检查。

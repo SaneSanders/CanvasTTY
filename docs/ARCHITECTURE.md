@@ -39,12 +39,16 @@ Electron main process
     ├── PluginSecretsService → OS-backed encrypted plugin credentials with fail-closed availability
     ├── PluginMediaService → user-granted music folders, ranged audio streams, playlist files
     ├── HermesHudService → permission-gated Hermes Desktop HUD lifecycle through a fixed control contract
+    ├── MaterialService → canvas materials: realpath file grants, live state, versions, remarks, drafts, scenarios
+    │   └── MaterialBlobs → content-addressed version and screenshot blobs under one storage quota
+    ├── HandoffService / HandoffResults → handoff packages, verified paste delivery, turn tracking, results folders
     ├── BrowserService → tabs, shared persistent profile, downloads, presence, WebContentsView lifecycle
     │   ├── BrowserStore / BrowserPolicyService / BrowserAuditStore
     │   ├── BrowserCore / BrowserCommandDispatcher / BrowserAutomationService
     │   └── AgentGateway → authenticated UDS/named pipe for the bundled stdio MCP helper
     ├── canvastty-plugin:// → CSP-constrained static plugin resources
     ├── canvastty-media:// → permission-checked local audio streams
+    ├── canvastty-material:// → read-only material, version, and scenario-step streams
     └── native dialogs/window controls
 ```
 
@@ -85,6 +89,24 @@ The built-in browser is split across surfaces: `BrowserCard` renders trusted win
 
 Renderer IPC and the agent gateway call the same `BrowserCore.execute(actor, command, signal)` boundary. Reads may run concurrently. Mutations are ordered FIFO per tab while different tabs remain independent; a repeated mutation request ID returns the recorded result. Navigation and document changes advance the revision, so stale accessibility refs fail before side effects. Agent activity is recorded as a redacted append-only hash chain: typed/page text, screenshots, URL query/fragment, credentials, headers, cookies, and tokens are not stored.
 
+## Materials, remarks, and handoffs
+
+Canvas materials are local-file and capture cards on the canvas. `src/main/services/materials/MaterialService.ts` owns materials, versions, remarks, and drafts; `HandoffService.ts` builds and delivers handoff packages; `HandoffResults.ts` watches result folders and reads `canvastty-report-<n>.json`. The renderer sees only ids, display paths, and typed results in `src/renderer/src/features/materials/*`. Shared constants and limits live in `src/shared/materials.ts`. File and version bytes are served read-only through `canvastty-material://` with HTTP Range support, `no-store`, and `nosniff`.
+
+State is stored in `userData/materials/state.json` (`0600`, atomic, debounced) only while **Save materials after exit** is on. Text drafts are separate `0600` files under `userData/materials/drafts/`. If `state.json` cannot be parsed it is moved to `state.json.broken-<timestamp>` and an empty state is started. Versions are content-addressed blobs under `userData/materials/versions/`: at most 1 GB total, 256 MB per version, 32 MB per capture, and 20 versions per material. Video and audio files larger than 256 MB return an explicit error and are not versioned. Pinned versions are never pruned; otherwise the oldest unreferenced versions are evicted silently when the limit is reached, and when nothing can be evicted the operation returns an explicit `version-limit` error. Handoff packages live under `userData/materials/handoffs/<id>/`: at most 50 folders, 512 MB per package, and 1 GB total, pruned at startup and after each send. Disabling **Save materials after exit** clears `versions/` and `handoffs/` both at startup and on quit, and an empty state is written instead.
+
+A dropped, picked, or pasted file becomes a grant on its realpath. Every read reopens the file with `O_NOFOLLOW | O_NONBLOCK`, requires a regular file, and refuses when the path now resolves somewhere else. File identity is `dev`/`ino` from `stat`. The same content with a new `mtime`/`ino` remains the current version; a rename that changes only letter case is offered as "moved" after checking the same inode and ruling out a symlink. The results folder of a handoff is resolved to its realpath on every scan, and when the realpath becomes unreadable the watch falls back to the last known path and is disarmed ten minutes after the window closes or when the app quits. Removing a card never touches the original file; its pinned versions and captures that exist only in CanvasTTY go with it. Text edits are saved only while the on-disk hash still equals the edit's base (compare-and-swap), through a temporary file and rename in the same folder that keeps the file mode, line endings, and byte-order mark; the replaced content is kept as a version.
+
+Viewing never runs file content with application privileges. Images, video, and audio stream through `canvastty-material://`. Text is decoded as UTF-8 and rendered as text. PDF bytes are read in main over IPC and parsed by pdf.js in a worker without scripting, XFA, or WebAssembly.
+
+A remark pins the exact version it talks about and an anchor: `whole`, `point`/`region` on an image, `lines` in text, `time`/`span` in video and audio, `page` in a PDF, or `step` in a scenario. There can be at most 2 000 remarks, each up to 2 000 characters. Text excerpts include line numbers. A remark may reference another material; both sides are checked. `reported` comes only from an agent's report file and `accepted` only from the human. Updates are atomic through `MaterialService`'s serial queue.
+
+A handoff goes to an existing terminal session through `TerminalManager.deliverInput` as a bracketed paste. Only Claude Code and Codex have a verified paste contract: their text and image paths are inserted and confirmed by the headless xterm mirror before Enter is pressed, or by a `canvastty-report-<n>.json` in the selected results folder. Other agents receive text only, without Enter, and the outcome is `pasted` with a note of `not-observed`, `not-seen`, or `enter-failed`. Sending a second handoff to a session that is already sending is rejected as `busy`, and reusing the same handoff id as `already-sent`. Composed text is stripped of terminal control characters, and the full text is always written to the package's `handoff.md`. Turn start and end come only from lifecycle status of the same session run; delivery never means the agent read or finished anything.
+
+An optional results folder is watched during the handoff's turn window. New files become result cards and `canvastty-report-<n>.json` can mark remarks `reported`. A file is attributed to a handoff only when exactly one handoff's window explains the change; otherwise its source is shown as unknown.
+
+Page capture and scenario recording use only the renderer's public browser API: `browser_screenshot`, `browser_observe`, `getState`, and `onState`. The capture rectangle is measured against `.browser-card__viewport`, rendered by `BrowserCard`. Their UI stays outside the Browser card. A recording is explicitly started and stopped, bounded to 30 steps or 15 minutes, limited to the tab it started on, records no keystrokes, and stores URLs without query or fragment. URLs are also sanitized so high-entropy path segments are replaced with `…` before storage. Password fields are masked by the browser core, but ordinary text in form fields is visible on screenshots. A recording that outlives its renderer (for example after a reload) is closed by a timer in main with outcome `limit`. Video frames are captured from the displayed video rectangle and passed to `captureFrame`.
+
 ## Renderer boundaries
 
 `App.tsx` is the orchestration boundary. It loads settings/sessions, subscribes to main-process events, and coordinates dialogs and persistence. Feature components do not call unrelated feature APIs.
@@ -98,11 +120,14 @@ App
 │   ├── TerminalCard       one live xterm view, selection, rename, drag, resize, and snap behavior
 │   ├── CanvasRegion       persisted named color field, drag/resize, and spatial window grouping
 │   ├── StickyNoteCard     persisted text/bounds with drag, eight-way resize, and deferred text writes
+│   ├── MaterialCard       file, capture, and scenario cards: image, text, media, PDF, and scenario bodies with remarks
 │   ├── CanvasContextMenu  target-specific empty-canvas, region, and note commands
 │   ├── CanvasCommandPalette searchable sessions and the same global creation/launch actions
 │   ├── PluginCanvasCard   sandboxed plugin app with canvas bounds and semantic summary
 │   ├── BrowserCard        trusted browser chrome and canvas geometry for the native WebContentsView
 │   └── CanvasMinimap      viewport/entity overview, camera recentering, and canvas-direction drag panning
+├── HandoffDialog          recipient, remarks, files, exact preview, and delivery outcome
+├── CompareDialog          before/after images or a line diff, then accept or return
 ├── AgentLaunchDialog      fixed provider + folder + profile + launch
 └── SettingsPanel          two-pane icon-sidebar modal for General, Appearance, Agents, Controls, Browser, Plugins, and About
     ├── AgentHooksSettings built-in status revocation and explicit plugin-hook trust
@@ -158,6 +183,7 @@ Session counters, progress bars, and statuses must always derive from actual `Se
 - Add a provider in `ProviderId`, `providers.ts`, `TerminalManager.resolveLaunch`, the official provider asset map, and an optional safe limit adapter.
 - Add a persisted setting to `AppSettings`, defaults/normalization in `SettingsStore`, and the owning feature only. Settings owns user-facing canvas controls and shortcuts; camera math and snapping geometry remain pure renderer concerns.
 - Add a canvas entity as a separate feature component with an explicit position and callbacks; keep camera ownership in `WorkspaceCanvas`.
+- Add a material kind by extending `MaterialKind` in `src/shared/contracts.ts`, then adding the new kind to the `KINDS` Record in `src/main/services/materials/materialState.ts` (TypeScript will require the entry). Add normalization in `normalizeMaterial`, a `materialType` mapping and a `DEFAULT_SIZES` entry in `src/shared/materials.ts`, and matching cases in `anchorFits` and `remarkAnchorLabel`. Add `describeAnchor` text in `src/main/services/materials/handoffText.ts` and a body component in `MaterialCard` under `src/renderer/src/features/materials/`.
 - Publish a runtime extension with `canvastty.plugin.json` API v1 (or v2 for `services`) and static HTML/CSS/JS entries. Contribution kinds are `home-widget`, `canvas-app`, and `window`; capability access is restricted to declared permissions. See [Runtime plugins](plugins.md).
 
 Every extension should pass `npm run typecheck`, `npm run build`, and a real Electron interaction check.

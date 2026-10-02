@@ -33,8 +33,12 @@ Electron main process
     ├── PluginSecretsService → защищённое системное шифрование credentials плагинов с fail-closed поведением
     ├── PluginMediaService → разрешённые медиапапки, ranged audio streams, плейлисты
     ├── BrowserService → встроенные вкладки и lifecycle изолированных WebContentsView
+    ├── MaterialService → материалы холста: grants по realpath, live-состояние, версии, замечания, черновики, сценарии
+    │   └── MaterialBlobs → content-addressed блобы версий и скриншотов под общей квотой
+    ├── HandoffService / HandoffResults → пакеты передачи, проверенная доставка вставкой, ход turn, папки результатов
     ├── canvastty-plugin:// → статические plugin resources под CSP
     ├── canvastty-media:// → локальные аудиопотоки с проверкой разрешений
+    ├── canvastty-material:// → read-only потоки материалов, версий и шагов сценария
     └── нативные dialogs/window controls
 ```
 
@@ -61,6 +65,24 @@ Electron main process
 
 Встроенный браузер разделён между поверхностями: `BrowserCard` рисует доверенный внешний chrome окна, вкладки, навигацию, agent badges, downloads, dialogs и canvas geometry, а `BrowserService` размещает активный native view поверх измеренного viewport карточки. Во время движения карточки или камеры native view остаётся live и получает coalesced geometry updates по кадрам; он скрывается только в semantic summary, при редактировании HOME и за trusted modal surfaces. Дробные renderer bounds расширяются до охватывающих device-independent pixels, а активный tab view переподключается только при фактической смене вкладки. Typed pointer bridge возвращает click/hover activity native page в canvas selection и явно восстанавливает фокус страницы, не блокируя её ввод. Само подключение или heartbeat не создаёт presence: badge появляется только после browser-команды, а cursor — только после появления реальной pointer position.
 
+## Материалы, замечания и передачи
+
+Материалы — это карточки локальных файлов и снимков на холсте. `src/main/services/materials/MaterialService.ts` владеет материалами, версиями, замечаниями и черновиками; `HandoffService.ts` собирает и доставляет пакеты передач; `HandoffResults.ts` наблюдает за папками результатов и читает `canvastty-report-<n>.json`. Renderer видит только ID, отображаемые пути и типизированные результаты в `src/renderer/src/features/materials/*`. Общие константы и лимиты — в `src/shared/materials.ts`. Байты файлов и версий отдаются только для чтения через `canvastty-material://` с поддержкой HTTP Range, `no-store` и `nosniff`.
+
+Состояние хранится в `userData/materials/state.json` (`0600`, атомарно, с debounce) только при включённом **Сохранять материалы после выхода**. Текстовые черновики — отдельные файлы `0600` в `userData/materials/drafts/`. Если `state.json` не удаётся распарсить, он переносится в `state.json.broken-<timestamp>` и запускается с пустым состоянием. Версии — content-addressed блобы в `userData/materials/versions/`: не более 1 ГБ суммарно, до 256 МБ на версию, до 32 МБ на снимок, до 20 версий на материал. Видео и аудио больше 256 МБ возвращают явную ошибку и не версионируются. Закреплённые (pinned) версии не вытесняются; иначе при превышении лимита без предупреждения удаляются самые старые несвязанные версии, а когда удалять нечего, операция возвращает явную ошибку `version-limit`. Пакеты передач лежат в `userData/materials/handoffs/<id>/`: не более 50 папок, до 512 МБ на пакет и до 1 ГБ суммарно, чистка при старте и после каждой отправки. Выключенный переключатель **Сохранять материалы после выхода** очищает `versions/` и `handoffs/` при старте и при выходе, а состояние записывается пустым.
+
+Перетащенный, выбранный или вставленный файл становится grant на его realpath. Каждое чтение заново открывает файл с `O_NOFOLLOW | O_NONBLOCK`, требует обычный файл и отказывает, если путь теперь ведёт в другое место. Идентичность файла — `dev`/`ino` из `stat`. Тот же контент с новым `mtime`/`ino` остаётся текущей версией; переименование, изменяющее только регистр букв, предлагается как «перемещён» после проверки того же inode и исключения symlink. Папка результатов передачи при каждом скане приводится к realpath, а при нечитаемом realpath наблюдение возвращается к последнему известному пути и снимается через десять минут после конца окна или при выходе приложения. Удаление карточки не трогает исходный файл; вместе с ней удаляются её закреплённые версии и снимки, существующие только в CanvasTTY. Правка текста сохраняется только если хеш на диске всё ещё равен базе правки (compare-and-swap), через временный файл и rename в той же папке с сохранением режима файла, окончаний строк и BOM; заменённое содержимое остаётся версией.
+
+Просмотр никогда не исполняет содержимое файла с правами приложения. Изображения, видео и аудио идут через `canvastty-material://`. Текст декодируется как UTF-8 и выводится как текст. Байты PDF читаются в main через IPC и разбираются pdf.js в worker без скриптов, XFA и WebAssembly.
+
+Замечание закрепляет точную версию и якорь: `whole`, `point`/`region` на изображении, `lines` в тексте, `time`/`span` в видео и аудио, `page` в PDF или `step` в сценарии. Замечаний не более 2000, текст каждого — не более 2000 символов. Выдержки текста сопровождаются номерами строк. Замечание может ссылаться на другой материал; проверяются обе стороны. `reported` приходит только из файла-отчёта агента, `accepted` — только от человека. Обновления атомарны через serial-очередь `MaterialService`.
+
+Передача уходит в существующую терминальную сессию через `TerminalManager.deliverInput` как bracketed paste. Проверенная доставка — только для Claude Code и Codex: их текст и пути изображений вставляются и подтверждаются headless-зеркалом xterm перед нажатием Enter, либо отчётом `canvastty-report-<n>.json` в выбранной папке результатов. Прочим агентам передаётся только текст, без Enter, и итог — `pasted` с одной из причин `not-observed`, `not-seen` или `enter-failed`. Повторная отправка в сессию, которая уже отправляет, отбивается как `busy`, а повторное использование того же id передачи — как `already-sent`. Из текста удаляются управляющие символы терминала, полный текст всегда пишется в `handoff.md` пакета. Начало и конец turn берутся только из lifecycle-статуса того же запуска сессии; доставка не означает, что агент что-то прочитал или сделал.
+
+Необязательная папка результатов наблюдается в окне turn передачи. Новые файлы становятся карточками результатов, а `canvastty-report-<n>.json` может перевести замечания в `reported`. Файл приписывается передаче, только если его изменение объясняет окно ровно одной передачи; иначе источник показывается неизвестным.
+
+Снимок страницы и запись сценария пользуются только публичным renderer API браузера: `browser_screenshot`, `browser_observe`, `getState` и `onState`. Прямоугольник захвата меряется относительно `.browser-card__viewport`, который рендерит `BrowserCard`. Их UI находится вне карточки Browser. Запись явно включается и выключается, ограничена 30 шагами или 15 минутами и вкладкой, где началась, не записывает нажатия клавиш и хранит URL без query и fragment. Перед сохранением URL санитизируются: высокоэнтропийные сегменты пути заменяются на `…`. Пароли маскируются ядром браузера, но обычный текст в полях форм виден на скриншотах. Запись, пережившая renderer (например, после перезагрузки), закрывается таймером main с исходом `limit`. Кадры видео снимаются из видимого прямоугольника видео и передаются в `captureFrame`.
+
 ## Границы renderer
 
 `App.tsx` — граница оркестрации. Он загружает settings/sessions, подписывается на события main process, координирует dialogs и persistence. Feature components не вызывают API несвязанных фич.
@@ -73,7 +95,10 @@ App
 │   │   └── HomeMediaWidget независимые pick/replace/remove controls
 │   ├── TerminalCard       xterm, selection, rename, drag, resize и snap
 │   ├── PluginCanvasCard   sandboxed plugin app с bounds и summary
+│   ├── MaterialCard       карточки файлов, снимков и сценариев: image, text, media, PDF и scenario с замечаниями
 │   └── BrowserCard        доверенный browser chrome и geometry для native view
+├── HandoffDialog          получатель, замечания, файлы, точный предпросмотр и итог доставки
+├── CompareDialog          изображения до/после или построчный diff, затем принять или вернуть
 ├── AgentLaunchDialog      фиксированный provider + folder + profile + launch
 └── SettingsPanel          General, Appearance, Controls и Plugins
     └── PluginSettingsSection preview, permissions, registry и contributions
@@ -116,6 +141,7 @@ Session counters, progress bars и statuses всегда выводятся из
 - Новый provider добавляется в `ProviderId`, `providers.ts`, `TerminalManager.resolveLaunch`, карту официальных provider assets и опциональный безопасный limit adapter.
 - Сохраняемая setting добавляется в `AppSettings`, defaults/normalization в `SettingsStore` и только во владеющую фичу. Settings владеет пользовательскими canvas controls и shortcuts; camera math и snapping geometry остаются чистыми renderer concerns.
 - Canvas entity добавляется отдельным feature component с явной position и callbacks; camera ownership остаётся в `WorkspaceCanvas`.
+- Новый вид материала добавляется через `MaterialKind` в `src/shared/contracts.ts`, затем в Record `KINDS` в `src/main/services/materials/materialState.ts` (typecheck потребует новый ключ). Добавь нормализацию в `normalizeMaterial`, отображение в `materialType` и запись в `DEFAULT_SIZES` в `src/shared/materials.ts`, исчерпывающие кейсы в `anchorFits` и `remarkAnchorLabel`, текст для `describeAnchor` в `src/main/services/materials/handoffText.ts` и body-компонент в `MaterialCard` в `src/renderer/src/features/materials/`.
 - Runtime extension публикуется со статическими HTML/CSS/JS entries и `canvastty.plugin.json` API v1. Виды contributions: `home-widget`, `canvas-app`, `window`; capability access ограничен declared permissions. См. [Runtime-плагины](plugins.ru.md).
 
 Каждое расширение должно пройти `npm run typecheck`, `npm run build` и проверку взаимодействия в настоящем Electron.

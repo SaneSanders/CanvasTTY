@@ -59,6 +59,20 @@
 - 指针停在空白 canvas 的 viewport edge `56px` 范围内时，canvas 以 RTS 风格 edge-pan；速度线性增加，到边缘达到 `900px/s`。Edge panning 默认关闭，在 Settings 启用。指针位于 interactive surface 或正在 drag-pan 时暂停。
 - Dialog close action 留在自己的 header/control row 内，使用一致 inset，不覆盖 field、outline 或 panel boundary。
 
+## 素材与交接
+
+- 拖放到空白 canvas 的文件，以及空白 canvas 菜单或命令面板中的 **Add files…** 与 **Paste from clipboard**，会成为素材卡片：图片、文本/Markdown/代码、PDF、视频、音频或普通文件。同一处的 **Capture the browser page** 与 **Record a browser scenario** 作用于当前可见的 Browser tab。拖放到实时终端的文件仍以 quoted path 粘贴。General 中提供 **退出后保存画布素材**（默认开启）；关闭后，素材、批注与文本草稿只保留到本次运行结束。
+- 素材卡片使用共享的 `54px` header、move/resize/snap 与 semantic summary。Header 显示名称（悬停显示完整路径）、以 `vN` 表示的最新固定版本、带未处理批注数量的 **Send to agent…**、可编辑文本的 **Edit**、**Add remark**、动作菜单（**Pin a version**、**Show in folder**、**Copy path**），以及移除。仅当 CanvasTTY 持有原文件没有的数据（固定版本或截图）或卡片上有批注/被引用时，移除才会要求确认，确认文本中会注明批注数量。绝不会删除原文件。丢失、重命名或不可读的文件会以带恢复动作的提示替换卡片内容；卡片、批注与固定版本保留。
+- 在画布图层顺序中，素材卡片是普通 canvas 卡片。其中 text、PDF、scenario 是可聚焦 widget：只有卡片处于焦点时滚轮才会滚动卡片主体；其他素材类型总是把滚轮交给画布。
+- 批注模式需显式进入，并因类型而异：在图片上拖出区域或点击一点、在文本中选择行、在视频/音频时间轴上标记时刻或起止片段、点击 PDF 页面、选择场景步骤，或批注整个素材。所有带批注的卡片（包括 notice 状态与无持续时间的媒体）都会显示批注 chips 行。批注以编号标记显示，跟随固定版本，并显示状态：open、sent、agent 已报告、accepted、reopened。旧版本上的标记显示为过期，而不是被移动。删除批注分两步：点击 **Delete** 后先变为 **Delete for sure?**，确认后才真正删除。
+- 文本就地编辑，保留文件的换行符与 BOM。未保存的文本是草稿，仅在开启 **退出后保存画布素材** 时跨重启保留。若开始编辑后磁盘文件发生变化，保存会被拒绝并显示冲突提示，可选 Show difference、Write mine（先把磁盘内容保存为一个版本）或 Use the disk version。超过 2 MB 或非 UTF-8 的文件不作为文本显示，混合换行符的文件以只读方式打开。
+- 页面截取与场景录制绝不在 Browser 卡片或网页内部添加控件。录制器是 Browser 旁的独立卡片，带脉动的 Recording 状态、隐私说明、Mark what's wrong 与 Stop。达到 30 步或 15 分钟、标签页关闭或应用退出时自动停止并说明原因。完成的录制按步骤列出图标、URL、元素与可选截图；人的期望与记录的事实在视觉上分开。
+- 视频提供 Capture frame，PDF 页面提供相机动作；结果是放在来源旁的图片卡片，副标题注明时刻或页码。
+- General 中 **退出后保存画布素材** 开关旁显示存储占用行：“版本占用 X / 1 GB…”。
+- 交接对话框选择一个实时 agent 会话作为接收方，并显示批注、文件、可选备注、可选结果目录、agent 将收到的精确文本，以及图片是作为附件还是以路径传递。普通终端不会出现在列表中；忙碌、等待批准、启动中或已退出的 agent 会话会说明原因，发送保持禁用。发送后对话框只显示投递事实：已发送、图片已附加、turn 已开始、turn 已结束。它始终说明投递不代表 agent 已阅读或完成批注；若粘贴成功但未按 Enter，会如实说明并提供 Open terminal。`pasted` 结果会附带三条原因之一作为提示：`not-observed`、`not-seen` 或 `enter-failed`。如果接收会话已经结束，则不再显示关于按 Enter 的提示。
+- 被监视目录中的结果文件以结果卡片出现，带交接编号；若多个交接都能解释该变更，则来源显示为未知。Compare 打开对比对话框：前后图片（Side by side 或 Slider）或带图例的逐行 diff。只有人可以接受批注或将其退回；agent 报告仅作为 agent 的原话显示。
+- 素材快捷键：`Cmd/Ctrl+V` 从剪贴板粘贴为素材卡片，`Cmd/Ctrl+S` 保存当前文本编辑，`Cmd/Ctrl+Enter` 保存场景标记或批注，`Esc` 取消当前批注草稿。
+
 ## 验收检查
 
 - React TSX 中没有自定义 `<svg>` 或 `<path>`。
@@ -66,6 +80,8 @@
 - `AgentLaunchDialog` 中没有 provider picker。
 - Canvas card 中没有 maximize/fullscreen action。
 - 没有虚假的 count、percentage、reset timer、determinate progress 或 placeholder session。
+- 没有人的操作，任何批注都不会被标记为 accepted；任何交接都不会因为已投递而显示为已阅读或已完成。
+- Browser 卡片及网页内部没有录制、截取或素材控件。
 - Plugin install 在确认前总会显示已校验 manifest 与 requested permission；绝不执行 repository script。
 - 普通终端从 `idle` 开始；智能体在 provider hook 报告 lifecycle 前保持 `unavailable`。Codex、Claude Code、Qwen Code、Kimi Code、OpenCode、Hermes 与 Grok Build 通过机器可读 hook 报告 `idle`、`working` 和 `needs_approval`；Claude/Qwen OSC title marker 保留为兼容 fallback。
 - 只有结构化 provider-adapter signal 才能显示 `needs_approval`；绝不解析人类可读 terminal output 来伪造状态。

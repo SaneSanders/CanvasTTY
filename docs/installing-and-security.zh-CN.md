@@ -69,6 +69,8 @@ gh variable set SPARKLE_PUBLIC_ED_KEY --repo howdeploy/CanvasTTY \
 | 浏览器恢复状态 | `userData/browser-state.json` 中的安全 HTTP(S) 标签 URL、顺序和活动标签 ID；关闭标签恢复时禁用/清除 |
 | 浏览器审计日志 | `userData/browser/audit` 下的脱敏 hash-chain JSONL；活动文件达到 100 MB 时轮转，超过 30 天的轮转文件会在 store 初始化或下一次轮转时清理 |
 | 应用诊断 | `userData/logs` 中四个最大 1 MiB 的 JSONL 文件；用户可明确操作，将近期事件及选定系统信息随问题描述发送至配置的 HTTPS 服务。没有自动上传；内容和配置见 [diagnostics](diagnostics.md) |
+| 画布素材 | `userData/materials/`：`state.json`、`versions/` 下按内容寻址的版本 blob（最多 1 GB）、`drafts/` 下的文本草稿、`handoffs/` 下的交接包（最多 50 个文件夹，每个 512 MB，总计 1 GB）。Agent 报告写入用户选择的结果目录。**退出后保存画布素材** 开关决定启动和退出时保留或清除 `versions/` 与 `handoffs/`。`canvastty-material://` 协议只服务已授权文件，每次请求校验 realpath 与文件类型，并使用 `no-store`、`nosniff` 与 HTTP Range |
+| 其他日志 | 仅本地 stdout/stderr；CanvasTTY 没有远程日志收集器，也没有项目自营遥测端点 |
 
 `userData` 的具体路径可能随系统配置而不同。CanvasTTY 会向 Electron 请求正确的每用户目录，绝不会把源码 checkout 当作运行时存储使用。
 

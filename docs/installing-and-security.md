@@ -69,6 +69,8 @@ The native agent helper `canvastty-helper` (Go, standard library only, no cgo) i
 | Browser restore state | Safe HTTP(S) tab URLs, tab order, and active-tab ID in `userData/browser-state.json`; disabled/cleared when tab restore is turned off |
 | Browser audit log | Redacted hash-chain JSONL below `userData/browser/audit`; the active file rotates at 100 MB and rotated files older than 30 days are pruned during store initialization or rotation |
 | Application diagnostics | Four rotating 1 MiB JSONL event files below `userData/logs`; a user may explicitly send recent logs and selected runtime metadata with a complaint to the configured HTTPS collector. No automatic upload; setup and contents are described in [diagnostics](diagnostics.md) |
+| Canvas materials | `userData/materials/`: `state.json`, content-addressed version blobs under `versions/` (up to 1 GB), text drafts under `drafts/`, handoff packages under `handoffs/` (up to 50 folders, 512 MB each, 1 GB total). Agent reports are written to the user-chosen results folder. The **Save canvas materials after exit** toggle keeps or clears `versions/` and `handoffs/` at startup and on quit. The `canvastty-material://` protocol serves only granted files, checks realpath and file type on every request, and uses `no-store`, `nosniff`, and HTTP Range headers |
+| Other logs | Local stdout/stderr only; CanvasTTY has no remote log collector or project-operated telemetry endpoint |
 
 Exact `userData` paths may vary with OS configuration. CanvasTTY asks Electron for the correct per-user directory and never uses the source checkout as runtime storage.
 

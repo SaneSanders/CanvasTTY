@@ -201,3 +201,9 @@ test("line remarks belong to text, areas to images", async () => {
     assert.equal((await service.addRemark({ materialId: notes.id, anchor: { kind: "lines", start: 3, end: 2 }, reference: null, text: "x" })).ok, false);
   });
 });
+
+test("the text editor saves on the physical Cmd/Ctrl+S chord in any layout", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/renderer/src/features/materials/TextMaterialBody.tsx", import.meta.url), "utf8");
+  assert.match(source, /\(event\.metaKey \|\| event\.ctrlKey\) && !event\.altKey && matchesPhysicalOrLayoutKey\(event, "KeyS", "s"\)/);
+});

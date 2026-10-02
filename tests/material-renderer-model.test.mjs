@@ -13,7 +13,8 @@ import {
   materialFolder,
   materialRejectionKey,
   materialRemovalLosesData,
-  materialSubtitle
+  materialSubtitle,
+  remarkAddable
 } from "../src/renderer/src/features/materials/materialCardModel.ts";
 
 const bounds = (x, y, width = 300, height = 200) => ({ position: { x, y }, size: { width, height } });
@@ -58,6 +59,14 @@ test("an accepted snapshot keeps the bounds objects of unmoved cards", () => {
   assert.equal(accepted.materials[1].position, moved.position);
 });
 
+test("a running recording takes no remarks, a finished one takes them again", () => {
+  const recording = material("a", 0, 0, { kind: "scenario", scenario: { state: "recording" } });
+  const done = material("b", 0, 0, { kind: "scenario", scenario: { state: "done" } });
+  assert.equal(remarkAddable(recording), false);
+  assert.equal(remarkAddable(done), true);
+  assert.equal(remarkAddable(material("c", 0, 0)), true);
+});
+
 test("byte sizes and folders are formatted for the card", () => {
   assert.equal(formatBytes(512, "en"), "512 B");
   assert.equal(formatBytes(1536, "en"), "1.5 KB");
@@ -73,6 +82,7 @@ test("removal asks first only when CanvasTTY holds data the file on disk does no
   assert.equal(materialRemovalLosesData(material("a", 0, 0)), false);
   assert.equal(materialRemovalLosesData(material("a", 0, 0, { versions: [{ id: "v" }] })), true);
   assert.equal(materialRemovalLosesData(material("a", 0, 0, { location: null })), true);
+  assert.equal(materialRemovalLosesData(material("a", 0, 0, { draft: { baseHash: "h" } })), true);
 });
 
 test("failures and rejections map to explained messages; cancelling says nothing", () => {
@@ -98,6 +108,8 @@ test("the card subtitle names the origin or falls back to the folder", () => {
   assert.equal(materialSubtitle({ ...base, location: null, origin: null }, "en"), "");
   assert.equal(materialSubtitle({ ...base, origin: { kind: "clipboard" } }, "ru"), "Из буфера обмена");
   assert.equal(materialSubtitle({ ...base, origin: { kind: "browser", url: "example.com/page" } }, "en"), "example.com/page");
+  assert.equal(materialSubtitle({ ...base, origin: { kind: "pdf-page", page: 3, sourceName: "brief.pdf" } }, "en"), "Page 3 · brief.pdf");
+  assert.equal(materialSubtitle({ ...base, origin: { kind: "frame", time: 65, sourceName: "clip.mp4" } }, "en"), "Frame 1:05 · clip.mp4");
 });
 
 test("the handoff dialog warns whenever the outcome state is not saved", async () => {

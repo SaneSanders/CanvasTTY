@@ -28,12 +28,12 @@ test("the element under a click is the innermost one that contains it", () => {
 
 test("steps read as facts, and the person's expectation reads as theirs", () => {
   const step = (overrides) => ({ index: 0, at: 1, url: "http://127.0.0.1:8765/index.html", title: "Acme store", point: null, element: null, text: null, image: null, ...overrides });
-  assert.equal(scenarioStepSummary(step({ kind: "start" }), "en"), "Start: Acme store");
+  assert.equal(scenarioStepSummary(step({ kind: "start" }), "en"), "Opened Acme store");
   assert.equal(scenarioStepSummary(step({ kind: "click", element: { role: "button", name: "Buy now" } }), "en"), "Click: button “Buy now”");
-  assert.equal(scenarioStepSummary(step({ kind: "click", element: { role: "button", name: "Buy now" } }), "ru"), "Клик: button «Buy now»");
+  assert.equal(scenarioStepSummary(step({ kind: "click", element: { role: "button", name: "Buy now" } }), "ru"), "Нажатие: button «Buy now»");
   assert.equal(scenarioStepSummary(step({ kind: "click", point: { x: 10.4, y: 20.6 } }), "en"), "Click: (10, 21)");
-  assert.equal(scenarioStepSummary(step({ kind: "navigate", title: "" }), "en"), "Navigate: 127.0.0.1:8765/index.html");
-  assert.equal(scenarioStepSummary(step({ kind: "expectation", text: "A thank-you message appears." }), "ru"), "Проверка: A thank-you message appears.");
+  assert.equal(scenarioStepSummary(step({ kind: "navigate", title: "" }), "en"), "Went to 127.0.0.1:8765/index.html");
+  assert.equal(scenarioStepSummary(step({ kind: "expectation", text: "A thank-you message appears." }), "ru"), "Ожидается: A thank-you message appears.");
   assert.deepEqual(["start", "click", "navigate", "expectation", "tab-left"].map(scenarioStepIcon), ["browser", "scenario", "arrow", "flag", "browser"]);
   assert.deepEqual(["stopped", "limit", "browser-closed", "app-closed", null].map(scenarioStopKey),
     [null, "scenarioStoppedLimit", "scenarioStoppedBrowser", "scenarioStoppedApp", null]);

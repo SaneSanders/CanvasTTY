@@ -46,3 +46,9 @@ test("context menus stay inside the canvas viewport", () => {
     { x: 12, y: 12 }
   );
 });
+
+test("disabled menu rows look disabled and keep hover off", async () => {
+  const styles = await readFile(new URL("../src/renderer/src/styles/app.css", import.meta.url), "utf8");
+  assert.match(styles, /\.canvas-menu__row:disabled\s*\{[^}]*opacity:/);
+  assert.match(styles, /\.canvas-menu__row:disabled:hover\s*\{[^}]*background:\s*transparent/);
+});

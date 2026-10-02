@@ -70,3 +70,13 @@ test("canvas focus directions follow the configured keyboard bindings", async ()
   assert.match(source, /matchesShortcut\(event, settings\.shortcuts\[action\]\)/);
   assert.doesNotMatch(source, /canvasFocusShortcut/);
 });
+
+test("focusable material cards join the alt+arrow focus candidates", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/renderer/src/features/workspace/WorkspaceCanvas.tsx", import.meta.url), "utf8");
+  const candidates = source.slice(source.indexOf("const focusCandidates"), source.indexOf("];", source.indexOf("const focusCandidates")));
+  assert.match(candidates, /renderedMaterials/);
+  assert.match(candidates, /materialLayerId\(material\.id\)/);
+  const handler = source.slice(source.indexOf("const focusDirection"), source.indexOf("}, [focusCandidates"));
+  assert.match(handler, /renderedMaterials\.find\(\(candidate\) => materialLayerId\(candidate\.id\) === target\)/);
+});

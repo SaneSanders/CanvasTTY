@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   constrainMaterialResize,
+  freeSpotBelow,
+  handoffDraftKey,
+  spotBeside,
   MATERIAL_MAX_SIZE,
   MATERIAL_MIN_SIZE,
   materialCardSize,
@@ -10,7 +13,7 @@ import {
   materialUrl
 } from "../src/shared/materials.ts";
 
-test("file names map to a material kind by extension", () => {
+test("file names map to a kind and a served type; everything else stays a plain file", () => {
   assert.deepEqual(materialType("Hero.PNG"), { kind: "image", mimeType: "image/png" });
   assert.deepEqual(materialType("clip.mov"), { kind: "video", mimeType: "video/quicktime" });
   assert.deepEqual(materialType("voice.m4a"), { kind: "audio", mimeType: "audio/mp4" });
@@ -51,4 +54,40 @@ test("resizing clamps to the material limits and keeps the opposite edge", () =>
   assert.deepEqual(resized.position, { x: 150 - MATERIAL_MIN_SIZE.width, y: 160 - MATERIAL_MIN_SIZE.height });
   const huge = constrainMaterialResize({ position: { x: 0, y: 0 }, size: { width: 9000, height: 9000 } }, "se");
   assert.deepEqual(huge, { position: { x: 0, y: 0 }, size: MATERIAL_MAX_SIZE });
+});
+
+test("a new card beside the browser moves below the cards already there", () => {
+  const occupied = [
+    { position: { x: 1000, y: 0 }, size: { width: 400, height: 300 } },
+    { position: { x: 1000, y: 324 }, size: { width: 400, height: 200 } },
+    { position: { x: 2000, y: 0 }, size: { width: 400, height: 900 } }
+  ];
+  assert.deepEqual(freeSpotBelow({ x: 1000, y: 0 }, { width: 460, height: 580 }, occupied), { x: 1000, y: 548 });
+  assert.deepEqual(freeSpotBelow({ x: 1500, y: 0 }, { width: 460, height: 580 }, occupied), { x: 1500, y: 0 });
+});
+
+test("a card made beside the browser goes to the first side where it can be seen", () => {
+  const browser = { position: { x: 0, y: 0 }, size: { width: 900, height: 600 } };
+  const size = { width: 460, height: 580 };
+  const visible = { position: { x: -800, y: -100 }, size: { width: 2400, height: 1300 } };
+  assert.deepEqual(spotBeside(browser, size, [], visible), { x: 948, y: 0 });
+  const crowded = [{ position: { x: 948, y: 0 }, size: { width: 460, height: 1400 } }];
+  assert.deepEqual(spotBeside(browser, size, crowded, visible), { x: -508, y: 0 });
+  assert.deepEqual(spotBeside(browser, size, crowded, { position: { x: 0, y: 0 }, size: { width: 1500, height: 1300 } }), { x: 0, y: 648 });
+});
+
+test("a handoff draft key ignores id order but not content", () => {
+  const base = {
+    id: "d-1",
+    sessionId: "s-1",
+    remarkIds: ["r-2", "r-1"],
+    editableMaterialIds: ["m-2", "m-1"],
+    note: "fix it",
+    resultsFolder: "/out"
+  };
+  const reordered = { ...base, remarkIds: ["r-1", "r-2"], editableMaterialIds: ["m-1", "m-2"] };
+  assert.equal(handoffDraftKey(base), handoffDraftKey(reordered));
+  assert.notEqual(handoffDraftKey(base), handoffDraftKey({ ...base, note: "" }));
+  assert.notEqual(handoffDraftKey(base), handoffDraftKey({ ...base, remarkIds: ["r-1"] }));
+  assert.notEqual(handoffDraftKey(base), handoffDraftKey({ ...base, resultsFolder: null }));
 });

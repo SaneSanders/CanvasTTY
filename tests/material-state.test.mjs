@@ -125,3 +125,13 @@ test("image and file anchors are normalized to their own bounds", () => {
   assert.equal(normalizeAnchor({ kind: "region", x: 0.8, y: 0, width: 0.3, height: 0.1 }), null);
   assert.equal(normalizeAnchor({ kind: "region", x: 0, y: 0, width: 0, height: 0.1 }), null);
 });
+
+test("media and page anchors are normalized to their own bounds", () => {
+  assert.deepEqual(normalizeAnchor({ kind: "step", index: 4 }), { kind: "step", index: 4 });
+  assert.equal(normalizeAnchor({ kind: "step", index: 30 }), null);
+  assert.equal(normalizeAnchor({ kind: "step", index: -1 }), null);
+  assert.equal(normalizeAnchor({ kind: "step", index: 1.5 }), null);
+  assert.deepEqual(normalizeAnchor({ kind: "time", start: 3, end: null }), { kind: "time", start: 3, end: null });
+  assert.equal(normalizeAnchor({ kind: "time", start: 3, end: 3 }), null);
+  assert.equal(normalizeAnchor({ kind: "page", page: 100_001 }), null);
+});

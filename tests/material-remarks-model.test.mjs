@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   anchorPercentages,
   containedRect,
+  deliveryKey,
   dragAnchor,
+  pasteNoteKey,
   POINT_DRAG_THRESHOLD,
   referenceCounts,
   remarkAnchorKey,
@@ -13,6 +15,7 @@ import {
   remarkStatusClass
 } from "../src/renderer/src/features/materials/materialRemarksModel.ts";
 import { remarkDrawable, remarkPickable } from "../src/renderer/src/features/materials/materialCardModel.ts";
+import { handoffAttachesImages, handoffBlockFor } from "../src/shared/materials.ts";
 
 test("an image sits letterboxed inside its box, and a drag inside it becomes a clamped share of the picture", () => {
   const rect = containedRect({ width: 400, height: 300 }, { width: 1600, height: 900 });
@@ -35,6 +38,23 @@ test("remarks are grouped per material in their numbered order", () => {
   assert.deepEqual([...referenceCounts([referring(1, "a", "b"), referring(2, "c", "b"), referring(3, "a", "a"), remark(4, "b")])], [["b", 2]]);
 });
 
+test("delivery reads only as far as the evidence goes, and only a live idle agent can take a handoff", () => {
+  const delivery = (overrides) => ({ state: "submitted", turnStartedAt: null, turnEndedAt: null, ...overrides });
+  assert.equal(deliveryKey(delivery({ state: "pasted" })), "deliveryPasted");
+  assert.equal(deliveryKey(delivery({})), "deliverySubmitted");
+  assert.equal(deliveryKey(delivery({ turnStartedAt: 5 })), "deliveryTurnStarted");
+  assert.equal(deliveryKey(delivery({ turnStartedAt: 5, turnEndedAt: 9 })), "deliveryTurnEnded");
+  const session = (overrides) => ({ provider: "claude", exitCode: null, status: "idle", environment: null, ...overrides });
+  assert.equal(handoffBlockFor(session({})), null);
+  assert.equal(handoffBlockFor(session({ provider: "terminal" })), "not-an-agent");
+  assert.equal(handoffBlockFor(session({ exitCode: 0 })), "exited");
+  assert.equal(handoffBlockFor(session({}), true), "starting");
+  assert.equal(handoffBlockFor(session({ status: "working" })), "busy");
+  assert.equal(handoffBlockFor(session({ status: "needs_approval" })), "needs-approval");
+  assert.equal(handoffBlockFor(session({ environment: { id: "ssh" } })), "remote-environment");
+  assert.deepEqual(["claude", "codex", "qwen", "kimi"].map(handoffAttachesImages), [true, true, false, false]);
+});
+
 test("remark anchors read the same in the editor for every kind, and every status has its colour class", () => {
   assert.deepEqual([
     { kind: "lines", start: 3, end: 3 },
@@ -42,22 +62,25 @@ test("remark anchors read the same in the editor for every kind, and every statu
     { kind: "page", page: 2 },
     { kind: "time", start: 62, end: null },
     { kind: "time", start: 62, end: 75.5 },
+    { kind: "step", index: 0 },
     { kind: "region", x: 0, y: 0, width: 1, height: 1 },
     { kind: "point", x: 0, y: 0 },
     { kind: "whole" }
   ].map((anchor) => remarkAnchorLabel(anchor, "en")), [
     "Remark on lines 3", "Remark on lines 3–5", "Remark on page 2", "Remark on the time 1:02", "Remark on the time 1:02–1:15.5",
-    "Remark on an area", "Remark on a point", "Remark on the whole file"
+    "Remark on step 1", "Remark on an area", "Remark on a point", "Remark on the whole file"
   ]);
+  assert.equal(remarkAnchorLabel({ kind: "whole" }, "en", true), "Remark on the whole recording");
   assert.equal(remarkStatusClass("sent"), "material-remark-status material-remark-status--sent");
 });
 
-test("remarks are placed on ready image and file materials, and references can be picked on the same kinds", () => {
-  const material = (kind, overrides = {}) => ({ kind, state: "ready", ...overrides });
-  assert.deepEqual(["image", "text", "video", "audio", "pdf", "file"].map((kind) => remarkDrawable(material(kind))), [true, true, true, true, true, true]);
+test("remarks are placed on ready materials that can show a spot, and references can be picked on the same kinds except recordings", () => {
+  const material = (kind, overrides = {}) => ({ kind, state: "ready", scenario: null, ...overrides });
+  assert.deepEqual(["image", "text", "video", "audio", "pdf", "file"].map((kind) => remarkDrawable(material(kind))), [true, true, true, true, true, false]);
   assert.equal(remarkDrawable(material("image", { state: "missing" })), false);
-  assert.equal(remarkPickable(material("image")), true);
-  assert.equal(remarkPickable(material("file")), true);
+  assert.equal(remarkDrawable(material("scenario", { scenario: { state: "recording" } })), false);
+  assert.equal(remarkDrawable(material("scenario", { scenario: { state: "done" } })), true);
+  assert.equal(remarkPickable(material("scenario", { scenario: { state: "done" } })), false);
   assert.equal(remarkPickable(material("pdf")), true);
 });
 
@@ -99,4 +122,11 @@ test("deleting a remark asks first, and a failed delete is reported", async () =
   const app = await readFile(new URL("../src/renderer/src/App.tsx", import.meta.url), "utf8");
   const del = app.indexOf('action === "delete"');
   assert.match(app.slice(del, del + 220), /catch\(\(\) => showToast/);
+});
+
+test("a paste hint never suggests Enter to an exited session", () => {
+  assert.equal(pasteNoteKey("enter-failed", true), "handoffPastedSessionGone");
+  assert.equal(pasteNoteKey("enter-failed"), "handoffPastedEnterFailed");
+  assert.equal(pasteNoteKey("not-observed"), "handoffPastedNotObserved");
+  assert.equal(pasteNoteKey(null), "handoffPastedNotSeen");
 });

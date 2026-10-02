@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CanvasMaterial, LocaleId, MaterialFailure, MaterialText } from "../../../../shared/contracts";
 import { UiIcon } from "../../components/UiIcon";
 import { t } from "../../lib/i18n";
+import { matchesPhysicalOrLayoutKey } from "../../lib/shortcuts";
 import { formatBytes } from "./materialCardModel";
 import { MaterialNotice } from "./MaterialCard";
 import { remarkStatusClass, remarkStatusKey, type MaterialRemarkActions, type MaterialRemarking } from "./materialRemarksModel";
@@ -287,7 +288,7 @@ export function TextMaterialBody({
             data-canvas-wheel-priority="local"
             onChange={(event) => changeText(event.target.value)}
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "s") {
+              if ((event.metaKey || event.ctrlKey) && !event.altKey && matchesPhysicalOrLayoutKey(event, "KeyS", "s")) {
                 event.preventDefault();
                 if (state === "draft" && live.editable) void save();
               }

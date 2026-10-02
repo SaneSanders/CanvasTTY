@@ -170,6 +170,11 @@ export class HandoffService {
         return { ok: false, reason: unwritten };
       }
       this.options.materials.updateHandoffDelivery(plan.id, { imagesExpected: plan.text.images.length });
+      try {
+        await this.options.materials.flush(true);
+      } catch {
+        return { ok: false, reason: "unavailable" };
+      }
       let outcome: Partial<HandoffDelivery>;
       try {
         outcome = await this.deliver(plan, this.compose(plan), screen);
@@ -181,6 +186,11 @@ export class HandoffService {
       if (outcome.state === "submitted" && early !== null) outcome.turnStartedAt = early;
       this.options.materials.updateHandoffDelivery(plan.id, outcome);
       if (outcome.state === "submitted") this.options.materials.markRemarksSent(plan.remarks.map((remark) => remark.id), plan.id);
+      const persisted = await this.options.materials.flush(true).then(() => true, () => false);
+      if (!persisted) {
+        outcome = { ...outcome, stateSaved: false };
+        this.options.materials.updateHandoffDelivery(plan.id, outcome);
+      }
       await this.prune().catch(() => undefined);
       const recorded = this.options.materials.handoff(plan.id);
       if (!recorded) return { ok: false, reason: "unavailable" };
@@ -261,7 +271,8 @@ export class HandoffService {
         turnStartedAt: null,
         turnEndedAt: null,
         note: null,
-        error: null
+        error: null,
+        stateSaved: true
       }
     });
     return { ok: true, plan, screen };

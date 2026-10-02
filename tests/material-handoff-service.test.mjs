@@ -666,3 +666,34 @@ test("drawn images are charged once: a package inside the estimate but under the
     assert.equal(sent.length, 1);
   }, { packageLimit: 120, images: { canDraw: () => true, marked: async () => Buffer.alloc(8), crop: async () => Buffer.alloc(8) } });
 });
+
+test("a handoff refuses delivery while the state cannot be persisted", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft, packages }) => {
+    terminal.add({ provider: "claude", id: "s1" });
+    const blocked = join(packages, "..", "state.json.tmp");
+    await mkdir(blocked);
+    const result = await handoffs.send(draft("s1"));
+    assert.deepEqual({ ok: result.ok, reason: result.ok ? null : result.reason }, { ok: false, reason: "unavailable" });
+    assert.equal(terminal.writes.length, 0, "nothing reached the terminal");
+    await rm(blocked, { recursive: true });
+  });
+});
+
+test("a delivered handoff says when the outcome could not be saved", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft, packages }) => {
+    terminal.add({ provider: "claude", id: "s1" });
+    terminal.tui = claudeTui(terminal);
+    const blocked = join(packages, "..", "state.json.tmp");
+    const deliverInput = terminal.deliverInput.bind(terminal);
+    terminal.deliverInput = async (id, data) => {
+      if (data === "\r") await mkdir(blocked, { recursive: true });
+      return deliverInput(id, data);
+    };
+    const result = await handoffs.send(draft("s1"));
+    assert.equal(result.ok, true);
+    assert.equal(result.handoff.delivery.state, "submitted");
+    assert.equal(result.handoff.delivery.stateSaved, false);
+    assert.equal(terminal.writes.length > 0, true, "the terminal did receive the package");
+    await rm(blocked, { recursive: true });
+  });
+});

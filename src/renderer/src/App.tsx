@@ -87,7 +87,8 @@ import { homeGridPixelSize, homeLayoutFitsGrid, placeHomeWidget } from "./featur
 import { boundsInsideRegion, translateBounds } from "./features/workspace/canvasRegions";
 import { DEFAULT_SESSION_SIZE, findNearHomeSessionPosition } from "./features/workspace/sessionPlacement";
 import { useMaterials } from "./features/materials/useMaterials";
-import { HandoffDialog } from "./features/materials/HandoffDialog";
+const HandoffDialog = lazy(() =>
+  import("./features/materials/HandoffDialog").then((module) => ({ default: module.HandoffDialog })));
 import {
   addResultNeedsNotice,
   materialFailureKey,
@@ -1687,6 +1688,18 @@ export function App(): React.JSX.Element {
           onEditHome={startHomeEditor}
           onOpenBrowser={openBrowser}
         />
+        <HandoffDialog
+          locale={settings.locale}
+          initialRemarkIds={handoffRemarkIds}
+          sessions={sessions}
+          materials={materials.materials}
+          remarks={materials.remarks}
+          handoffs={materials.snapshot.handoffs}
+          lastSessionId={lastHandoffSessionId}
+          onClose={() => setHandoffRemarkIds(null)}
+          onSent={(handoff) => setLastHandoffSessionId(handoff.sessionId)}
+          onFocusSession={focusSession}
+        />
       </Suspense>
       {closedGitRisks.length > 0 && (
         <div className="git-risk-panel">
@@ -1712,18 +1725,6 @@ export function App(): React.JSX.Element {
       {materials.snapshot.loadError && (
         <div className="materials-load-error" role="alert">{t(settings.locale, "materialsLoadFailed")}</div>
       )}
-      <HandoffDialog
-        locale={settings.locale}
-        initialRemarkIds={handoffRemarkIds}
-        sessions={sessions}
-        materials={materials.materials}
-        remarks={materials.remarks}
-        handoffs={materials.snapshot.handoffs}
-        lastSessionId={lastHandoffSessionId}
-        onClose={() => setHandoffRemarkIds(null)}
-        onSent={(handoff) => setLastHandoffSessionId(handoff.sessionId)}
-        onFocusSession={focusSession}
-      />
       <Toast message={toast} />
     </div>
   );

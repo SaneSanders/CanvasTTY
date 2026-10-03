@@ -15,6 +15,14 @@ import { build } from "esbuild";
 // must shrink accordingly.
 const appEntry = fileURLToPath(new URL("../src/renderer/src/App.tsx", import.meta.url));
 
+const viteAssetUrlStub = {
+  name: "vite-asset-url-stub",
+  setup(context) {
+    context.onResolve({ filter: /\?url$/ }, (args) => ({ path: args.path, namespace: "vite-asset-url" }));
+    context.onLoad({ filter: /.*/, namespace: "vite-asset-url" }, () => ({ contents: "export default \"stub-asset-url\";" }));
+  }
+};
+
 async function bundleApp() {
   const outdir = await mkdtemp(join(tmpdir(), "canvastty-bundle-split-"));
   try {
@@ -28,7 +36,8 @@ async function bundleApp() {
       write: true,
       metafile: true,
       logLevel: "silent",
-      loader: { ".svg": "text", ".css": "empty", ".png": "empty", ".ttf": "empty", ".woff2": "empty", ".ico": "empty" }
+      loader: { ".svg": "text", ".css": "empty", ".png": "empty", ".ttf": "empty", ".woff2": "empty", ".ico": "empty" },
+      plugins: [viteAssetUrlStub]
     });
     return metafile;
   } finally {

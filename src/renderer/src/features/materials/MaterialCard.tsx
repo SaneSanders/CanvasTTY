@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { CanvasMaterial, LocaleId, Point, SessionBounds, Size } from "../../../../shared/contracts";
 import { constrainMaterialResize, MATERIAL_MAX_SIZE, MATERIAL_MIN_SIZE, materialUrl } from "../../../../shared/materials";
 import { UiIcon } from "../../components/UiIcon";
@@ -26,7 +26,8 @@ import {
 } from "./materialRemarksModel";
 import { RemarkChips } from "./RemarkChips";
 import { MediaMaterialBody } from "./MediaMaterialBody";
-import { PdfMaterialBody } from "./PdfMaterialBody";
+
+const PdfMaterialBody = lazy(() => import("./PdfMaterialBody").then((module) => ({ default: module.PdfMaterialBody })));
 import { ScenarioBody, type ScenarioControls } from "./ScenarioBody";
 import { TextMaterialBody } from "./TextMaterialBody";
 
@@ -469,7 +470,11 @@ function MaterialBody({
     return <ScenarioBody material={material} locale={locale} controls={scenarioControls} remarking={remarking} remarkActions={remarkActions} />;
   }
   if (material.kind === "pdf") {
-    return <PdfMaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions} />;
+    return (
+      <Suspense fallback={null}>
+        <PdfMaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions} />
+      </Suspense>
+    );
   }
   if (material.kind === "text") {
     return (

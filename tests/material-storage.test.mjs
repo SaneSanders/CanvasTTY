@@ -112,6 +112,28 @@ test("does not treat stored captures as a new store", async () => {
   });
 });
 
+test("missing indexes preserve pending state writes", async () => {
+  await withStore(async ({ statePath, create, blobs, setPersist }) => {
+    const first = create();
+    await first.load();
+    await first.dispose();
+    const pending = await readFile(statePath);
+    await writeFile(`${statePath}.tmp`, pending);
+    await rm(statePath);
+    assert.deepEqual(await blobs(), []);
+    for (const persist of [true, false]) {
+      setPersist(persist);
+      const next = create();
+      await next.load();
+      assert.equal(next.snapshot().loadError, "unreadable");
+      await next.flush();
+      await next.dispose();
+      assert.deepEqual(await readFile(`${statePath}.tmp`), pending);
+      await assert.rejects(readFile(statePath), { code: "ENOENT" });
+    }
+  });
+});
+
 test("collects after a valid load", async () => {
   await withStore(async ({ root, create, capture, blobs }) => {
     const first = create();

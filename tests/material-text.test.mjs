@@ -202,6 +202,29 @@ test("a draft survives a restart when materials are kept, and goes away on save"
   });
 });
 
+test("missing indexes preserve drafts without blobs", async () => {
+  await withText(async ({ service, add, create, userData, setPersist }) => {
+    const notes = await add("notes.txt", "original\n");
+    const base = (await service.readText(notes.id, null)).content;
+    await service.writeDraft(notes.id, { baseHash: base.hash, text: "unsaved work\n" });
+    await service.dispose();
+    const state = join(userData, "materials", "state.json");
+    const draft = join(userData, "materials", "drafts", `${notes.id}.json`);
+    const saved = await readFile(draft);
+    assert.deepEqual(await readdir(join(userData, "materials", "versions")).catch(() => []), []);
+    await rm(state);
+    for (const persist of [true, false]) {
+      setPersist(persist);
+      const restarted = await create();
+      assert.equal(restarted.snapshot().loadError, "unreadable");
+      await restarted.flush();
+      await restarted.dispose();
+      assert.deepEqual(await readFile(draft), saved);
+      await assert.rejects(readFile(state), { code: "ENOENT" });
+    }
+  });
+});
+
 test("drafts stay in memory only when materials are not kept after exit", async () => {
   await withText(async ({ service, userData, add, setPersist }) => {
     const notes = await add("notes.txt", "base\n");
@@ -458,26 +481,50 @@ test("a conflict state counts as pending text for removal confirmation", async (
   assert.match(source, /onPendingTextRef\.current\?\.\(state === "draft" \|\| state === "conflict"\)/);
 });
 
-test("evicted version blobs are collected only after the state is durable", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const source = await readFile(new URL("../src/main/services/materials/MaterialService.ts", import.meta.url), "utf8");
-  assert.match(source, /private async collect\(\): Promise<void> \{\s*try \{\s*await this\.writeState\(true\);\s*\} catch \{\s*return;\s*\}/);
-  const create = source.slice(source.indexOf("material.nextVersion += 1;"));
-  assert.match(create, /await this\.collect\(\);\s*this\.changed\(\);/);
+test("eviction keeps blobs until persistence succeeds", async () => {
+  await withText(async ({ service, add, userData, work }) => {
+    const notes = await add("notes.txt", "original\n");
+    for (let index = 0; index < 20; index += 1) {
+      const base = (await service.readText(notes.id, null)).content;
+      assert.equal((await service.saveText(notes.id, { baseHash: base.hash, text: `version ${index}\n` })).ok, true);
+    }
+    await service.flush();
+    const oldest = service.material(notes.id).versions[0];
+    const blob = service.versionFile(notes.id, oldest.id).path;
+    const state = join(userData, "materials", "state.json");
+    const saved = await readFile(state);
+    await mkdir(`${state}.tmp`);
+    const base = (await service.readText(notes.id, null)).content;
+    const refused = await service.saveText(notes.id, { baseHash: base.hash, text: "not yet\n" });
+    assert.deepEqual(refused, { ok: false, reason: "write-failed" });
+    assert.equal(await readFile(blob, "utf8"), "original\n");
+    assert.deepEqual(await readFile(state), saved);
+    await rm(`${state}.tmp`, { recursive: true });
+    await writeFile(join(work, "notes.txt"), "changed elsewhere\n");
+    assert.equal((await service.pinVersion(notes.id, "edit")).ok, true);
+    await service.flush();
+    const kept = JSON.parse(await readFile(state, "utf8")).materials[0].versions;
+    assert.equal(kept.some((version) => version.id === oldest.id), false);
+    await assert.rejects(readFile(blob), { code: "ENOENT" });
+  });
 });
 
-test("a save is refused when the state is not writable at all", async () => {
-  await withText(async ({ create, userData, work }) => {
+test("unreadable stores refuse text additions and saves", async () => {
+  await withText(async ({ service, add, create, userData, work }) => {
+    const notes = await add("notes.txt", "original\n");
+    const base = (await service.readText(notes.id, null)).content;
+    await service.dispose();
     await rm(join(userData, "materials", "state.json"), { force: true });
     await mkdir(join(userData, "materials", "state.json"));
     const blocked = await create();
-    await writeFile(join(work, "notes.txt"), "original\n");
-    await blocked.addPaths([join(work, "notes.txt")], { x: 0, y: 0 });
-    const notes = blocked.snapshot().materials[0];
-    const base = (await blocked.readText(notes.id, null)).content;
+    assert.equal(blocked.snapshot().loadError, "unreadable");
+    assert.deepEqual(await blocked.addPaths([join(work, "notes.txt")], { x: 0, y: 0 }), {
+      added: [], existing: [], rejected: [{ name: "notes.txt", reason: "unreadable" }]
+    });
     const saved = await blocked.saveText(notes.id, { baseHash: base.hash, text: "saved\n" });
-    assert.deepEqual({ ok: saved.ok, reason: saved.ok ? null : saved.reason }, { ok: false, reason: "write-failed" });
+    assert.deepEqual(saved, { ok: false, reason: "unavailable" });
     assert.equal(await readFile(join(work, "notes.txt"), "utf8"), "original\n");
+    assert.equal((await stat(join(userData, "materials", "state.json"))).isDirectory(), true);
     await rm(join(userData, "materials", "state.json"), { recursive: true });
   });
 });

@@ -99,6 +99,89 @@ test("legacy cards survive identity migration", async () => {
   }
 });
 
+test("legacy files restore text previews", async () => {
+  await withMaterials(async ({ work, service, userData, create }) => {
+    const samples = [
+      ["legacy.json", '{"unfinished": [true,\n', "application/json"],
+      ["legacy.md", "# Original\n\nText\n", "text/markdown"],
+      ["legacy.ts", "const value = 1;\n", "text/typescript"]
+    ];
+    const ids = [];
+    for (const [name, text] of samples) {
+      const path = join(work, name);
+      await writeFile(path, text);
+      const { added: [id] } = await service.addPaths([path], { x: 12, y: 34 }, { kind: "clipboard" });
+      ids.push(id);
+      service.setBounds(id, { position: { x: 12, y: 34 }, size: { width: 361, height: 231 } });
+      assert.equal((await service.pinVersion(id)).ok, true);
+    }
+    assert.equal((await service.addRemark({
+      materialId: ids[0], anchor: { kind: "whole" },
+      reference: { materialId: ids[1], anchor: { kind: "whole" } }, text: "Keep the source"
+    })).ok, true);
+    await service.dispose();
+    const statePath = join(userData, "materials/state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    for (const material of state.materials) {
+      material.kind = "file";
+      material.mimeType = "application/octet-stream";
+      for (const version of material.versions) version.mimeType = "application/octet-stream";
+    }
+    state.materials[0].name = "alias.bin";
+    await writeFile(statePath, JSON.stringify(state));
+
+    const restored = await create();
+    assert.equal(restored.snapshot().loadError, undefined);
+    for (let index = 0; index < samples.length; index += 1) {
+      const [name, text, mimeType] = samples[index];
+      const material = restored.material(ids[index]);
+      assert.equal(material.kind, "text");
+      assert.equal(material.mimeType, mimeType);
+      assert.equal(material.state, "ready");
+      const live = await restored.readText(material.id, null);
+      assert.equal(live.ok, true);
+      assert.equal(live.content.text, text);
+      const version = await restored.readText(material.id, material.versions[0].id);
+      assert.equal(version.ok, true);
+      assert.equal(version.content.text, text);
+      assert.equal(version.content.editable, false);
+      assert.equal(await readFile(join(work, name), "utf8"), text);
+    }
+    assert.deepEqual(restored.snapshot().remarks, state.remarks);
+    const expected = structuredClone(state);
+    expected.materials.forEach((material, index) => {
+      material.kind = "text";
+      material.mimeType = samples[index][2];
+    });
+    assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")), expected);
+  });
+});
+
+test("restore preserves known kinds and captures", async () => {
+  await withMaterials(async ({ work, service, userData, create }) => {
+    await writeFile(join(work, "renamed.txt"), pngBytes(4, 4));
+    await writeFile(join(work, "unknown.bin"), "source");
+    await service.addPaths([join(work, "renamed.txt"), join(work, "unknown.bin")], { x: 0, y: 0 });
+    assert.equal((await service.addCapture({
+      bytes: Buffer.from("captured source"), name: "capture.json", mimeType: "application/octet-stream",
+      origin: { kind: "clipboard" }, point: { x: 500, y: 0 }
+    })).ok, true);
+    await service.dispose();
+    const statePath = join(userData, "materials/state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    state.materials[0].kind = "image";
+    state.materials[0].mimeType = "image/png";
+    state.materials[1].name = "alias.json";
+    state.materials[2].kind = "file";
+    await writeFile(statePath, JSON.stringify(state));
+
+    const restored = await create();
+    assert.equal(restored.snapshot().loadError, undefined);
+    assert.deepEqual(restored.snapshot().materials.map((material) => material.kind), ["image", "file", "file"]);
+    assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")), state);
+  });
+});
+
 test("files past the canvas limit in one drop are reported, not dropped silently", async () => {
   await withMaterials(async ({ work, service }) => {
     const files = [];

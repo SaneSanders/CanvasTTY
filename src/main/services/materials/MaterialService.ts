@@ -180,6 +180,13 @@ export class MaterialService {
     }
     if (!this.options.persist()) state = emptyMaterialState();
     for (const material of state.materials) {
+      if (material.kind === "file" && material.path !== null) {
+        const type = materialType(basename(material.path));
+        if (type.kind !== "file") {
+          material.kind = type.kind;
+          material.mimeType = type.mimeType;
+        }
+      }
       this.materials.set(material.id, material);
     }
     this.remarks = state.remarks

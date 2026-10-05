@@ -147,6 +147,8 @@ test("an oversized handoff is replaced by a pointer to its file", () => {
 });
 
 test("backticks inside paths cannot break the code span", () => {
-  const text = handoffText(input({ editable: ["/work/odd`name.css"] }));
-  assert.match(text, /- `\/work\/odd'name\.css`/);
+  const text = handoffText(input({ editable: ["/work/odd`name.css", "/work/ends``"] }));
+  assert.ok(text.includes("- ``/work/odd`name.css``\n"));
+  assert.ok(text.includes("- ``` /work/ends`` ```\n"));
+  assert.ok(handoffPointerText(input(), "/work/odd`name/handoff.md").includes("``/work/odd`name/handoff.md``"));
 });

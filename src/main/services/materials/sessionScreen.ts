@@ -83,6 +83,7 @@ export class SessionScreen {
     for (let row = boundary - 1; row >= buffer.baseY; row -= 1) {
       const line = buffer.getLine(row);
       const text = line?.translateToString(true) ?? "";
+      if (/[─│╭╰═┃]{3,}/u.test(text)) break;
       const at = text.indexOf(marker);
       if (!line || at === -1 || text.slice(0, at).trim() !== "") continue;
       sawMarker = true;

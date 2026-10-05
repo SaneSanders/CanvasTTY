@@ -285,10 +285,14 @@ export class HandoffService {
     return null;
   }
 
-  private sameRun(plan: HandoffPlan, screen: SessionScreen | null): boolean {
+  private deliveryError(plan: HandoffPlan, screen: SessionScreen | null): string | null {
     const session = this.options.terminals.listMetadata().find((candidate) => candidate.id === plan.session.id);
-    return session !== undefined && session.exitCode === null && session.startedAt === plan.session.startedAt
-      && (screen === null || this.screens.get(session.id) === screen);
+    if (!session || session.exitCode !== null || session.startedAt !== plan.session.startedAt
+      || (screen !== null && this.screens.get(session.id) !== screen)) return RESTARTED;
+    const blocked = handoffBlockFor(session, this.options.terminals.launchPending(session.id));
+    return blocked || this.options.terminals.pluginContext(session.id)?.environment
+      ? "The agent's session is no longer ready for delivery."
+      : null;
   }
 
   private async check(draft: unknown, strict: boolean): Promise<Checked> {
@@ -474,7 +478,8 @@ export class HandoffService {
     const images = plan.text.images;
     const failed = (reason: string): Partial<HandoffDelivery> => ({ state: "failed", error: reason });
     const paste = async (data: string): Promise<string | null> => {
-      if (!this.sameRun(plan, screen)) return RESTARTED;
+      const error = this.deliveryError(plan, screen);
+      if (error) return error;
       const written = await this.options.terminals.deliverInput(id, `${PASTE_START}${data}${PASTE_END}`, 0);
       return written.delivered ? null : written.reason;
     };
@@ -515,7 +520,10 @@ export class HandoffService {
       || imageMarkers(current) > imagesBefore
     ), this.timing.pasteMs);
     if (!visible) return { state: "pasted", note: "not-seen", sentAt: this.now(), imagesAttached: attached };
-    if (!this.sameRun(plan, screen)) return failed(RESTARTED);
+    const error = this.deliveryError(plan, screen);
+    if (error) return error === RESTARTED
+      ? failed(error)
+      : { state: "pasted", note: "enter-failed", sentAt: this.now(), imagesAttached: attached, error };
     this.submitting.set(plan.id, { sessionId: id, turnStartedAt: null });
     const submitted = await this.options.terminals.deliverInput(id, "\r", 0);
     return submitted.delivered

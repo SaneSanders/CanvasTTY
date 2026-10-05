@@ -198,5 +198,9 @@ function share(value: number): string {
 }
 
 function code(value: string): string {
-  return `\`${inline(value).replace(/`/g, "'")}\``;
+  const text = inline(value);
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const padding = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${fence}${padding}${text}${padding}${fence}`;
 }

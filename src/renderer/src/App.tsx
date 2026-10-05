@@ -1461,6 +1461,7 @@ export function App(): React.JSX.Element {
     const handleShortcut = (event: KeyboardEvent): void => {
       if (shortcutReferenceOpen) return;
       if (handleMacNativeSelectAll(event, window.canvasTTY.window.isMacOS)) return;
+      if (handoffRemarkIds !== null) return;
       if (shouldKeepNativeKeyboardInput(event.target, window.canvasTTY.window.isMacOS, event)) return;
       if (event.repeat || isShortcutCaptureTarget(event.target) || isRenameInputTarget(event.target)) return;
       if (matchesShortcut(event, settings.shortcuts.toggleFullscreen)) {
@@ -1483,7 +1484,7 @@ export function App(): React.JSX.Element {
     };
 
     const handlePointerShortcut = (event: PointerEvent): void => {
-      if (shortcutReferenceOpen) return;
+      if (shortcutReferenceOpen || handoffRemarkIds !== null) return;
       if (isShortcutCaptureTarget(event.target) || isRenameInputTarget(event.target)) return;
       const action = matchesPointerShortcut(event, settings.shortcuts.home)
         ? "home"
@@ -1688,7 +1689,7 @@ export function App(): React.JSX.Element {
           onEditHome={startHomeEditor}
           onOpenBrowser={openBrowser}
         />
-        <HandoffDialog
+        {handoffRemarkIds !== null && <HandoffDialog
           locale={settings.locale}
           initialRemarkIds={handoffRemarkIds}
           sessions={sessions}
@@ -1699,7 +1700,7 @@ export function App(): React.JSX.Element {
           onClose={() => setHandoffRemarkIds(null)}
           onSent={(handoff) => setLastHandoffSessionId(handoff.sessionId)}
           onFocusSession={focusSession}
-        />
+        />}
       </Suspense>
       {closedGitRisks.length > 0 && (
         <div className="git-risk-panel">

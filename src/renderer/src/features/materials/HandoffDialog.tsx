@@ -13,6 +13,7 @@ import type {
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { UiIcon } from "../../components/UiIcon";
 import { t } from "../../lib/i18n";
+import { useModalFocus } from "../../lib/useModalFocus";
 import { PROVIDERS } from "../../lib/providers";
 import { sessionStatusLabel } from "../../lib/sessionStatus";
 import { HANDOFF_NOTE_LIMIT, handoffAttachesImages, handoffBlockFor, handoffDraftKey } from "../../../../shared/materials";
@@ -52,6 +53,8 @@ export function HandoffDialog({
   onFocusSession
 }: HandoffDialogProps): React.JSX.Element | null {
   const open = initialRemarkIds !== null;
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, open);
   const agents = useMemo(() => sessions.filter((session) => session.provider !== "terminal"), [sessions]);
   const [draftId, setDraftId] = useState(() => crypto.randomUUID());
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -131,15 +134,6 @@ export function HandoffDialog({
     return () => window.clearTimeout(timer);
   }, [draftKey, open, sentId, sending]);
 
-  useEffect(() => {
-    if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape" && !sending) onClose();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose, open, sending]);
-
   if (!open) return null;
 
   const sent = sentId ? handoffs.find((handoff) => handoff.id === sentId) ?? null : null;
@@ -176,7 +170,14 @@ export function HandoffDialog({
     <div className="dialog-backdrop handoff-dialog__backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !sending) onClose();
     }}>
-      <section className="handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="handoff-dialog-title">
+      <section ref={dialogRef} className="handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="handoff-dialog-title" tabIndex={-1}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Escape") {
+            event.preventDefault();
+            if (!sending) onClose();
+          }
+        }}>
         <header className="handoff-dialog__header">
           <span className="handoff-dialog__icon"><UiIcon name="send" size={22} /></span>
           <h2 id="handoff-dialog-title">{t(locale, "handoffDialogTitle")}</h2>
@@ -255,8 +256,9 @@ export function HandoffDialog({
                 )}
               </div>
               <p className="handoff-dialog__hint">{t(locale, "handoffResultsHint")}</p>
-              <h3>{t(locale, "handoffNote")}</h3>
+              <h3 id="handoff-note-label">{t(locale, "handoffNote")}</h3>
               <textarea
+                aria-labelledby="handoff-note-label"
                 value={note}
                 maxLength={HANDOFF_NOTE_LIMIT}
                 rows={3}

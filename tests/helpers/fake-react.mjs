@@ -66,7 +66,7 @@ export default { useState, useRef, useEffect, useLayoutEffect, useCallback, useM
 const root = fileURLToPath(new URL("../..", import.meta.url));
 
 /** Imports `exports` (comma-separated names) from a repository-relative module, plus the fake React controls. */
-export async function importWithFakeReact(modulePath, exports, { checkSnapshots = false } = {}) {
+export async function importWithFakeReact(modulePath, exports, { checkSnapshots = false, plugins = [] } = {}) {
   const { outputFiles } = await build({
     stdin: {
       contents: `export { ${exports} } from "./${modulePath}"; export { __render, __flush, __pending, __unmount, __reset } from "react";`,
@@ -80,7 +80,7 @@ export async function importWithFakeReact(modulePath, exports, { checkSnapshots 
     format: "esm",
     write: false,
     loader: { ".svg": "text", ".css": "empty", ".png": "empty", ".ico": "empty" },
-    plugins: [{
+    plugins: [...plugins, {
       name: "fake-react",
       setup(builder) {
         builder.onResolve({ filter: /^react(\/jsx-runtime)?$/ }, () => ({ path: "react", namespace: "fake-react" }));

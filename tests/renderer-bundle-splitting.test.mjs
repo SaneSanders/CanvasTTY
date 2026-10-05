@@ -15,11 +15,11 @@ import { build } from "esbuild";
 // must shrink accordingly.
 const appEntry = fileURLToPath(new URL("../src/renderer/src/App.tsx", import.meta.url));
 
-async function bundleApp() {
+async function bundleApp(entry = appEntry) {
   const outdir = await mkdtemp(join(tmpdir(), "canvastty-bundle-split-"));
   try {
     const { metafile } = await build({
-      entryPoints: [appEntry],
+      entryPoints: [entry],
       bundle: true,
       splitting: true,
       platform: "browser",
@@ -82,4 +82,16 @@ test("Settings and the launch/link dialogs are split out of the app's static imp
     eagerBytes < 1_700_000,
     `code statically reachable from App.js should stay bounded now that heavy UI loads on demand, got ${eagerBytes} bytes`
   );
+});
+
+test("source highlighting loads on demand", async () => {
+  const entry = fileURLToPath(new URL("../src/renderer/src/features/materials/TextMaterialBody.tsx", import.meta.url));
+  const metafile = await bundleApp(entry);
+  const body = outputFor(metafile, "TextMaterialBody.js");
+  const highlighter = Object.keys(metafile.outputs).find((path) => metafile.outputs[path].entryPoint?.endsWith("features/files/codeHighlight.ts"));
+  assert.ok(highlighter);
+  const { paths } = staticallyReachableBytes(metafile, body);
+  assert.equal(paths.has(highlighter), false);
+  const eagerInputs = [...paths].flatMap((path) => Object.keys(metafile.outputs[path].inputs));
+  assert.equal(eagerInputs.some((path) => /node_modules\/(?:lowlight|highlight.js|hast-util-to-jsx-runtime)\//.test(path)), false);
 });

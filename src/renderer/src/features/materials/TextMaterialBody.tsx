@@ -3,6 +3,7 @@ import type { CanvasMaterial, LocaleId, MaterialFailure, MaterialText } from "..
 import { UiIcon } from "../../components/UiIcon";
 import { t } from "../../lib/i18n";
 import { matchesPhysicalOrLayoutKey } from "../../lib/shortcuts";
+import { useTextHighlight } from "../files/useTextHighlight";
 import { formatBytes } from "./materialCardModel";
 import { MaterialNotice } from "./MaterialCard";
 import { remarkStatusClass, remarkStatusKey, type MaterialRemarkActions, type MaterialRemarking } from "./materialRemarksModel";
@@ -79,6 +80,7 @@ export function TextMaterialBody({
   liveRef.current = live;
 
   const lines = useMemo(() => (live ? live.text.split("\n") : []), [live]);
+  const syntax = useTextHighlight(live ? { name: material.name, text: live.text, hash: live.hash, byteSize: live.byteSize } : null);
   const markers = useMemo(() => lineMarkers(remarking.remarks, lines.length, staleVersionIds), [lines.length, remarking.remarks, staleVersionIds]);
   const state = saving ? "draft" : textEditState(baseHash, draftText, live);
   const drawing = remarking.mode === "draw" || remarking.mode === "pick";
@@ -357,6 +359,7 @@ export function TextMaterialBody({
   return (
     <div className={`material-text ${drawing ? "material-text--drawing" : ""}`}>
       {draftNotice}
+      {syntax.plain && <div className="material-text__highlight-note" role="status">{t(locale, "materialTextPlainPreview")}</div>}
       {failureText && <div className="material-text__banner material-text__banner--conflict" role="alert">{failureText}</div>}
       {(material.draft || state !== "clean") && (
         <div className="material-text__banner" role="status">
@@ -395,7 +398,7 @@ export function TextMaterialBody({
         }}
         onPointerCancel={() => setSelection(null)}
       >
-        <div className="material-text__rows" style={{ height: lines.length * TEXT_ROW_HEIGHT }}>
+        <div className="material-text__rows file-source" style={{ height: lines.length * TEXT_ROW_HEIGHT }}>
           {Array.from({ length: Math.max(0, last - first + 1) }, (_, offset) => {
             const index = first + offset;
             const number = index + 1;
@@ -424,7 +427,9 @@ export function TextMaterialBody({
                   ))}
                   {number}
                 </span>
-                <span className="material-text__line">{lines[index] || " "}</span>
+                <span className="material-text__line">{syntax.lines?.[index]?.length
+                  ? syntax.lines[index].map((token, tokenIndex) => <span key={tokenIndex} className={token.classNames.join(" ")}>{token.text}</span>)
+                  : lines[index] || " "}</span>
               </div>
             );
           })}

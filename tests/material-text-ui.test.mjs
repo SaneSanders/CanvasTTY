@@ -43,10 +43,10 @@ test("diff scroll survives deferred updates", () => {
   }
 });
 
-async function withEditor(run) {
+async function withEditor(run, { name = "notes.txt", text = "original\n", editing = true } = {}) {
   await withMaterials(async ({ service, work }) => {
-    await writeFile(join(work, "notes.txt"), "original\n");
-    const { added: [id] } = await service.addPaths([join(work, "notes.txt")], { x: 0, y: 0 });
+    await writeFile(join(work, name), text);
+    const { added: [id] } = await service.addPaths([join(work, name)], { x: 0, y: 0 });
     const content = await service.readText(id, null);
     const timers = new Map();
     let nextTimer = 0;
@@ -62,7 +62,7 @@ async function withEditor(run) {
       } }
     };
     const props = {
-      material: service.material(id), locale: "en", editing: true,
+      material: service.material(id), locale: "en", editing,
       remarking: { remarks: [], mode: "none", selectedRemarkId: null, draftAnchor: null, referenceAnchor: null },
       remarkActions: {}, staleVersionIds: new Set(), onReadable() {},
       onEditingChange(value) { props.editing = value; }
@@ -90,6 +90,43 @@ async function withEditor(run) {
     }
   });
 }
+
+test("highlighted source keeps line anchors", async () => {
+  await withEditor(async ({ props, render, settle, tree }) => {
+    await settle();
+    const lines = findAll(tree(), (node) => node.props?.className === "material-text__line");
+    assert.equal(lines.length, 4);
+    assert.ok(findAll(lines, (node) => node.props?.className?.includes("hljs-keyword")).length > 0);
+    const shownText = (node) => typeof node === "string" ? node
+      : Array.isArray(node) ? node.map(shownText).join("") : shownText(node?.props?.children ?? "");
+    assert.deepEqual(lines.map(shownText), ["const value = `one", "two`;", "value;", " "]);
+    let anchor;
+    props.remarking.mode = "draw";
+    props.remarkActions.draw = (_id, value) => { anchor = value; };
+    render();
+    const scroller = () => findAll(tree(), (node) => node.props?.className === "material-text__scroller")[0];
+    const element = { offsetHeight: 180, scrollTop: 0, getBoundingClientRect: () => ({ top: 0, height: 180 }), setPointerCapture() {} };
+    const event = (clientY) => ({ currentTarget: element, clientY, button: 0, pointerId: 1, preventDefault() {}, stopPropagation() {} });
+    scroller().props.onPointerDown(event(19));
+    render();
+    scroller().props.onPointerUp(event(37));
+    assert.deepEqual(anchor, { kind: "lines", start: 2, end: 3 });
+    props.editing = true;
+    render();
+    await settle();
+    assert.equal(findAll(tree(), (node) => node.type === "textarea")[0].props.value, "const value = `one\ntwo`;\nvalue;\n");
+  }, { name: "source.ts", text: "const value = `one\ntwo`;\nvalue;\n", editing: false });
+});
+
+test("large previews retain virtual rows", async () => {
+  await withEditor(async ({ settle, tree }) => {
+    await settle();
+    const lines = findAll(tree(), (node) => node.props?.className === "material-text__line");
+    assert.ok(lines.length < 100);
+    assert.equal(lines[0].props.children, "const x = 1;");
+    assert.equal(findAll(tree(), (node) => node.props?.className === "material-text__highlight-note").length, 1);
+  }, { name: "source.ts", text: "const x = 1;\n".repeat(10_000), editing: false });
+});
 
 test("Done retains oversized edits after rejection", async () => {
   await withEditor(async ({ id, service, props, render, settle, editor, button, tree }) => {

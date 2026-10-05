@@ -501,6 +501,15 @@ button { border: 0; }
 .material-text__row--marked { background: color-mix(in srgb, var(--pink) 26%, transparent); }
 .material-text__number { position: sticky; left: 0; z-index: 1; flex: none; width: calc(var(--material-text-gutter) + 34px); padding-right: .8em; color: var(--text-muted-on-dark); background: color-mix(in srgb, var(--surface) 78%, black); text-align: right; user-select: none; }
 .material-text__line { padding-right: 1.5em; tab-size: 4; }
+.material-text__highlight-note { flex: none; padding: .35em .7em; color: var(--text-muted-on-dark); background: var(--surface-soft); }
+.file-source .hljs-comment, .file-source .hljs-quote, .file-source .hljs-tag { color: var(--text-muted-on-dark); }
+.file-source .hljs-keyword, .file-source .hljs-selector-tag, .file-source .hljs-selector-id, .file-source .hljs-selector-class { color: var(--pink); }
+.file-source .hljs-doctag, .file-source .hljs-meta { color: var(--primary); }
+.file-source .hljs-built_in, .file-source .hljs-type, .file-source .hljs-title, .file-source .hljs-section, .file-source .hljs-name { color: var(--yellow); }
+.file-source .hljs-literal, .file-source .hljs-number, .file-source .hljs-symbol, .file-source .hljs-bullet { color: var(--accent); }
+.file-source .hljs-string, .file-source .hljs-regexp, .file-source .hljs-addition { color: var(--success); }
+.file-source .hljs-attr, .file-source .hljs-attribute, .file-source .hljs-variable, .file-source .hljs-template-variable { color: var(--blue); }
+.file-source .hljs-deletion { color: var(--danger); }
 .material-text__marker { position: absolute; top: 0; bottom: 0; left: calc(10px + var(--material-text-lane) * 5px); width: 4px; padding: 0; border-radius: 0; background: var(--marker); cursor: pointer; }
 .material-text__marker--stale { background: repeating-linear-gradient(var(--marker) 0 4px, transparent 4px 7px); }
 .material-text__marker--selected { box-shadow: 0 0 0 2px color-mix(in srgb, var(--marker) 45%, transparent); }

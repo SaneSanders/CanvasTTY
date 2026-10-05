@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { open, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { MaterialFailure, MaterialText, MaterialTextEdit } from "../../../shared/contracts.ts";
+import type { MaterialFailure, MaterialSaveResult, MaterialText, MaterialTextEdit } from "../../../shared/contracts.ts";
 import { SHA256_PATTERN } from "./materialState.ts";
 
 export const TEXT_EDIT_LIMIT = 2 * 1024 * 1024;
@@ -49,7 +49,7 @@ export function parseTextEdit(value: unknown, limit = TEXT_EDIT_LIMIT): Material
   return { baseHash, text };
 }
 
-export type BoundedRead = { ok: true; bytes: Buffer; mode: number } | { ok: false; reason: MaterialFailure };
+export type BoundedRead = { ok: true; bytes: Buffer; mode: number; identity: string } | { ok: false; reason: MaterialFailure };
 
 export async function readBounded(path: string, limit: number, partial = false): Promise<BoundedRead> {
   const flags = READ_FILE_FLAGS;
@@ -60,17 +60,17 @@ export async function readBounded(path: string, limit: number, partial = false):
     return { ok: false, reason: "unreadable" };
   }
   try {
-    const info = await handle.stat();
+    const info = await handle.stat({ bigint: true });
     if (!info.isFile()) return { ok: false, reason: "not-a-file" };
     if (!partial && info.size > limit) return { ok: false, reason: "too-large" };
     if (partial) {
       const buffer = Buffer.alloc(limit);
       const { bytesRead } = await handle.read(buffer, 0, limit, 0);
-      return { ok: true, bytes: buffer.subarray(0, bytesRead), mode: info.mode & 0o7777 };
+      return { ok: true, bytes: buffer.subarray(0, bytesRead), mode: Number(info.mode & 0o7777n), identity: `${info.dev}:${info.ino}` };
     }
     const bytes = await handle.readFile();
     if (bytes.length > limit) return { ok: false, reason: "too-large" };
-    return { ok: true, bytes, mode: info.mode & 0o7777 };
+    return { ok: true, bytes, mode: Number(info.mode & 0o7777n), identity: `${info.dev}:${info.ino}` };
   } catch {
     return { ok: false, reason: "unreadable" };
   } finally {
@@ -78,7 +78,12 @@ export async function readBounded(path: string, limit: number, partial = false):
   }
 }
 
-export async function replaceFile(path: string, bytes: Uint8Array, mode: number): Promise<void> {
+export async function replaceFile(
+  path: string,
+  bytes: Uint8Array,
+  mode: number,
+  check: () => Promise<Exclude<MaterialSaveResult, { ok: true }> | null>
+): Promise<Exclude<MaterialSaveResult, { ok: true }> | null> {
   const temporary = join(dirname(path), `.${basename(path)}.canvastty-${randomUUID().slice(0, 8)}.tmp`);
   const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
   try {
@@ -92,7 +97,13 @@ export async function replaceFile(path: string, bytes: Uint8Array, mode: number)
   }
   await handle.close();
   try {
+    const blocked = await check();
+    if (blocked) {
+      await rm(temporary, { force: true });
+      return blocked;
+    }
     await rename(temporary, path);
+    return null;
   } catch (error) {
     await rm(temporary, { force: true });
     throw error;

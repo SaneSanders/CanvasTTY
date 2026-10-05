@@ -404,7 +404,13 @@ export class MaterialService {
       if (!latest.ok) return latest;
       if (latest.content.hash !== parsed.baseHash) return { ok: false, reason: "conflict", current: latest.content };
       try {
-        await replaceFile(material.path, bytes, latest.mode);
+        const blocked = await replaceFile(material.path, bytes, latest.mode, async () => {
+          const checked = await this.readLiveText(material.path!);
+          if (!checked.ok) return checked;
+          if (checked.content.hash !== parsed.baseHash) return { ok: false, reason: "conflict", current: checked.content };
+          return checked.identity !== latest.identity || checked.mode !== latest.mode ? failure("write-failed") : null;
+        });
+        if (blocked) return blocked;
       } catch {
         return failure("write-failed");
       }
@@ -1003,7 +1009,7 @@ export class MaterialService {
     return strict ? write : this.writeQueue;
   }
 
-  private async readLiveText(path: string): Promise<{ ok: true; content: MaterialText; mode: number } | { ok: false; reason: MaterialFailure }> {
+  private async readLiveText(path: string): Promise<{ ok: true; content: MaterialText; mode: number; identity: string } | { ok: false; reason: MaterialFailure }> {
     let resolved: string;
     try {
       resolved = await realpath(path);
@@ -1014,7 +1020,7 @@ export class MaterialService {
     const read = await readBounded(resolved, TEXT_EDIT_LIMIT);
     if (!read.ok) return read;
     const content = decodeText(read.bytes);
-    return content ? { ok: true, content, mode: read.mode } : failure("not-text");
+    return content ? { ok: true, content, mode: read.mode, identity: read.identity } : failure("not-text");
   }
 
   private async loadDrafts(): Promise<void> {

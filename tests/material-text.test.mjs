@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, readdir, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import fs, { chmod, mkdir, readdir, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import test from "node:test";
 import { decodeText, encodeText, TEXT_EDIT_LIMIT } from "../src/main/services/materials/materialText.ts";
@@ -15,6 +16,66 @@ async function withText(run, options = {}) {
     await run({ service, work, userData, add, create, setPersist });
   }, options);
 }
+
+async function duringTextSave(run, update) {
+  const originalOpen = fs.open;
+  fs.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if (String(args[0]).includes(".canvastty-")) {
+      const sync = handle.sync.bind(handle);
+      handle.sync = async () => {
+        await update();
+        return sync();
+      };
+    }
+    return handle;
+  };
+  syncBuiltinESMExports();
+  try {
+    return await run();
+  } finally {
+    fs.open = originalOpen;
+    syncBuiltinESMExports();
+  }
+}
+
+test("staged saves preserve concurrent writes", async () => {
+  await withText(async ({ service, work, add }) => {
+    const notes = await add("notes.txt", "original\n");
+    const file = join(work, "notes.txt");
+    const base = (await service.readText(notes.id, null)).content;
+    await service.writeDraft(notes.id, { baseHash: base.hash, text: "mine\n" });
+    const saved = await duringTextSave(
+      () => service.saveText(notes.id, { baseHash: base.hash, text: "mine\n" }),
+      () => writeFile(file, "changed elsewhere\n")
+    );
+    assert.equal(saved.reason, "conflict");
+    assert.equal(saved.current.text, "changed elsewhere\n");
+    assert.equal(await readFile(file, "utf8"), "changed elsewhere\n");
+    assert.equal(service.readDraft(notes.id).text, "mine\n");
+    assert.deepEqual(await readdir(work), ["notes.txt"]);
+  });
+});
+
+test("staged saves detect replacement files", async () => {
+  await withText(async ({ service, work, add }) => {
+    const notes = await add("notes.txt", "original\n");
+    const file = join(work, "notes.txt");
+    const base = (await service.readText(notes.id, null)).content;
+    const saved = await duringTextSave(
+      () => service.saveText(notes.id, { baseHash: base.hash, text: "mine\n" }),
+      async () => {
+        await writeFile(`${file}.next`, "original\n");
+        await chmod(`${file}.next`, 0o600);
+        await rename(`${file}.next`, file);
+      }
+    );
+    assert.deepEqual(saved, { ok: false, reason: "write-failed" });
+    assert.equal(await readFile(file, "utf8"), "original\n");
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    assert.deepEqual(await readdir(work), ["notes.txt"]);
+  });
+});
 
 test("text is decoded as UTF-8 with its line endings and byte order mark remembered", () => {
   const crlf = decodeText(Buffer.from("\ufeffone\r\ntwo\r\n", "utf8"));

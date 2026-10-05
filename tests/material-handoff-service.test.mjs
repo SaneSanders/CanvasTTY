@@ -420,6 +420,78 @@ test("Claude's dimmed prompt hint is not input, but text the user typed there is
   });
 });
 
+test("Claude's completed prompt stays outside the composer", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft }) => {
+    terminal.add({ id: "s1", provider: "claude", cwd: "/work" });
+    terminal.tui = claudeTui(terminal);
+    terminal.emit("s1", "\x1b[2J\x1b[H❯ previous request\r\nFinished.\r\n────\r\n❯ \r\n────\r\n");
+    const result = await handoffs.send(draft("s1"));
+    assert.equal(result.ok, true);
+    assert.equal(result.handoff.delivery.state, "submitted");
+    assert.equal(terminal.writes.at(-1), "\r");
+  });
+});
+
+test("Claude's multiline draft still blocks delivery", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft }) => {
+    terminal.add({ id: "s1", provider: "claude", cwd: "/work" });
+    terminal.emit("s1", "\x1b[2J\x1b[H────\r\n❯ real draft\r\n  ❯ \r\n────\r\n");
+    assert.deepEqual(await handoffs.send(draft("s1")), { ok: false, reason: "composer-not-ready" });
+    assert.equal(terminal.writes.length, 0);
+  });
+});
+
+test("a status change during packaging blocks the paste", async () => {
+  for (const status of ["working", "needs_approval"]) {
+    let preparing;
+    await withHandoffs(async ({ materials, handoffs, terminal, remark, draft }) => {
+      terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+      preparing = () => terminal.setStatus("q1", status);
+      const result = await handoffs.send(draft("q1"));
+      assert.equal(terminal.writes.length, 0);
+      assert.equal(result.handoff.delivery.state, "failed");
+      assert.equal(materials.remark(remark.id).status, "open");
+    }, {
+      images: {
+        canDraw: () => true,
+        marked: async () => { preparing(); return Buffer.from("marked"); },
+        crop: async () => Buffer.from("crop")
+      }
+    });
+  }
+});
+
+test("a status change after pasting blocks Enter", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, remark, draft }) => {
+    terminal.add({ id: "s1", provider: "claude", cwd: "/work" });
+    const render = claudeTui(terminal);
+    terminal.tui = (id, data) => {
+      render(id, data);
+      if (data.startsWith(START)) terminal.setStatus(id, "needs_approval");
+    };
+    const result = await handoffs.send(draft("s1"));
+    assert.equal(terminal.writes.includes("\r"), false);
+    assert.equal(result.handoff.delivery.state, "pasted");
+    assert.equal(result.handoff.delivery.note, "enter-failed");
+    assert.equal(materials.remark(remark.id).status, "open");
+  });
+});
+
+test("a status change between Codex images stops delivery", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft }) => {
+    terminal.add({ id: "c1", provider: "codex", cwd: "/work" });
+    terminal.emit("c1", "\x1b[2J\x1b[H› Ask Codex to do anything\r\n");
+    const render = codexTui(terminal);
+    terminal.tui = (id, data) => {
+      render(id, data);
+      terminal.setStatus(id, "needs_approval");
+    };
+    const result = await handoffs.send(draft("c1"));
+    assert.equal(terminal.writes.length, 1);
+    assert.equal(result.handoff.delivery.state, "failed");
+  });
+});
+
 test("a session restarted in the middle of a delivery gets nothing more, and the handoff says why", async () => {
   await withHandoffs(async ({ handoffs, terminal, draft }) => {
     terminal.add({ id: "c1", provider: "codex", cwd: "/work", startedAt: 100 });

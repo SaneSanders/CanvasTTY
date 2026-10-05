@@ -63,14 +63,21 @@ export async function readBounded(path: string, limit: number, partial = false):
     const info = await handle.stat({ bigint: true });
     if (!info.isFile()) return { ok: false, reason: "not-a-file" };
     if (!partial && info.size > limit) return { ok: false, reason: "too-large" };
-    if (partial) {
-      const buffer = Buffer.alloc(limit);
-      const { bytesRead } = await handle.read(buffer, 0, limit, 0);
-      return { ok: true, bytes: buffer.subarray(0, bytesRead), mode: Number(info.mode & 0o7777n), identity: `${info.dev}:${info.ino}` };
+    const budget = partial ? limit : limit + 1;
+    let buffer = Buffer.alloc(Math.min(budget, Number(info.size) + 1));
+    let offset = 0;
+    while (offset < budget) {
+      if (offset === buffer.length) {
+        const grown = Buffer.alloc(Math.min(budget, buffer.length * 2));
+        buffer.copy(grown);
+        buffer = grown;
+      }
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
     }
-    const bytes = await handle.readFile();
-    if (bytes.length > limit) return { ok: false, reason: "too-large" };
-    return { ok: true, bytes, mode: Number(info.mode & 0o7777n), identity: `${info.dev}:${info.ino}` };
+    if (!partial && offset > limit) return { ok: false, reason: "too-large" };
+    return { ok: true, bytes: buffer.subarray(0, offset), mode: Number(info.mode & 0o7777n), identity: `${info.dev}:${info.ino}` };
   } catch {
     return { ok: false, reason: "unreadable" };
   } finally {

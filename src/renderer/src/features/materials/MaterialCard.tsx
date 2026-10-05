@@ -327,8 +327,8 @@ export function MaterialCard({
           onSelect={remarkActions.select}
         />
       )}
-      <div className="material-card__body">
-        {confirmingRemoval ? (
+      {confirmingRemoval && (
+        <div className="material-card__body" data-material-focus="true" tabIndex={-1}>
           <MaterialNotice
             icon="error"
             title={t(locale, "materialRemoveConfirm")}
@@ -345,13 +345,17 @@ export function MaterialCard({
             </button>
             <button type="button" onClick={() => setConfirmingRemoval(false)}>{t(locale, "cancel")}</button>
           </MaterialNotice>
-        ) : (
+        </div>
+      )}
+      {(!confirmingRemoval || pendingText.current) && (
+        <div className="material-card__body" hidden={confirmingRemoval} inert={confirmingRemoval}
+          style={confirmingRemoval ? { display: "none" } : undefined}>
           <MaterialBody material={material} locale={locale} remarking={remarking} remarkActions={remarkActions}
             staleVersionIds={staleVersionIds} editing={editing} onEditingChange={setEditing} onTextReadable={setTextReadable}
             onPendingText={(pending) => { pendingText.current = pending; }}
             onAction={onAction} />
-        )}
-      </div>
+        </div>
+      )}
       <div className="material-card__summary" aria-hidden={!summaryMode}>
         <span>
           <strong>{material.name}</strong>

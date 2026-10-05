@@ -398,6 +398,38 @@ test("old handoff packages are pruned by count and by their total size, newest f
   }, { foldersBytesLimit: 100 });
 });
 
+test("unreadable state prevents package pruning", async () => {
+  await withMaterials(async ({ service, create, userData }) => {
+    await service.dispose();
+    const statePath = join(userData, "materials", "state.json");
+    await writeFile(statePath, "{broken");
+    for (const name of ["older", "newer"]) {
+      await mkdir(join(service.handoffsPath, name), { recursive: true });
+      await writeFile(join(service.handoffsPath, name, "handoff.md"), Buffer.alloc(60, 7));
+    }
+    const materials = await create();
+    assert.equal(materials.snapshot().loadError, "unreadable");
+    const handoffs = new HandoffService({
+      materials,
+      terminals: new FakeTerminal(),
+      images: { canDraw: () => false, marked: async () => null, crop: async () => null },
+      root: materials.handoffsPath,
+      locale: () => "en",
+      foldersBytesLimit: 100
+    });
+    try {
+      await handoffs.prune();
+      assert.deepEqual((await readdir(materials.handoffsPath)).sort(), ["newer", "older"]);
+      for (const name of ["older", "newer"]) {
+        assert.deepEqual(await readFile(join(materials.handoffsPath, name, "handoff.md")), Buffer.alloc(60, 7));
+      }
+      assert.equal(await readFile(statePath, "utf8"), "{broken");
+    } finally {
+      handoffs.dispose();
+    }
+  });
+});
+
 test("a previous paste still waiting in Claude's prompt blocks the next one", async () => {
   await withHandoffs(async ({ handoffs, terminal, draft }) => {
     terminal.add({ id: "s1", provider: "claude", cwd: "/work" });

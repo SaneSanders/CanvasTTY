@@ -128,6 +128,24 @@ test("collects after a valid load", async () => {
   });
 });
 
+test("preserves handoff packages without their index", async () => {
+  await withStore(async ({ root, statePath, create, setPersist }) => {
+    const folder = join(root, "handoffs", "saved");
+    const handoff = join(folder, "handoff.md");
+    await mkdir(folder, { recursive: true });
+    await writeFile(handoff, "Only copy of the handoff");
+    for (const persist of [true, false]) {
+      setPersist(persist);
+      const service = create();
+      await service.load();
+      assert.equal(service.snapshot().loadError, "unreadable");
+      await service.dispose();
+      assert.equal(await readFile(handoff, "utf8"), "Only copy of the handoff");
+      await assert.rejects(readFile(statePath), { code: "ENOENT" });
+    }
+  });
+});
+
 test("retains metadata for a missing capture", async () => {
   await withStore(async ({ root, statePath, create, capture, blobs }) => {
     const first = create();

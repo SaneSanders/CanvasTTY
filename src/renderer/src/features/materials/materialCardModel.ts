@@ -120,7 +120,7 @@ export function materialWidgetAttributes(material: Pick<CanvasMaterial, "id" | "
 }
 
 export function materialRemovalLosesData(material: CanvasMaterial): boolean {
-  return material.location === null || material.versions.length > 0 || material.draft != null;
+  return material.location === null || material.versions.length > 0 || material.draft != null || material.draftError != null;
 }
 
 export function addResultNeedsNotice(result: MaterialsAddResult): boolean {

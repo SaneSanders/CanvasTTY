@@ -218,7 +218,7 @@ test("drafts stay in memory only when materials are not kept after exit", async 
   });
 });
 
-test("a removed material takes its draft with it, and broken draft files are dropped on load", async () => {
+test("removed drafts are collected; invalid drafts are preserved", async () => {
   await withText(async ({ service, userData, add, create }) => {
     const notes = await add("notes.txt", "base\n");
     const other = await add("other.txt", "other\n");
@@ -230,8 +230,76 @@ test("a removed material takes its draft with it, and broken draft files are dro
     await writeFile(join(userData, "materials", "drafts", `${other.id}.json`), "{broken");
     const restarted = await create();
     assert.equal(restarted.readDraft(notes.id), null);
-    assert.equal(restarted.readDraft(other.id), null);
-    assert.deepEqual(await readdir(join(userData, "materials", "drafts")), []);
+    assert.equal(restarted.material(other.id).draftError, "unreadable");
+    assert.throws(() => restarted.readDraft(other.id), /draft/i);
+    assert.deepEqual(await restarted.writeDraft(other.id, { baseHash: "f".repeat(64), text: "replacement\n" }), { ok: false, reason: "write-failed" });
+    restarted.discardDraft(other.id);
+    await restarted.flush();
+    assert.equal(await readFile(join(userData, "materials", "drafts", `${other.id}.json`), "utf8"), "{broken");
+    assert.deepEqual(await readdir(join(userData, "materials", "drafts")), [`${other.id}.json`]);
+  });
+});
+
+test("unreadable drafts survive restart", { skip: process.platform === "win32" }, async () => {
+  await withText(async ({ service, add, create, userData, work, setPersist }) => {
+    const notes = await add("notes.txt", "original\n");
+    const base = (await service.readText(notes.id, null)).content;
+    await service.writeDraft(notes.id, { baseHash: base.hash, text: "unsaved work\n" });
+    await service.dispose();
+    const file = join(userData, "materials", "drafts", `${notes.id}.json`);
+    const saved = await readFile(file, "utf8");
+    await chmod(file, 0o000);
+    try {
+      const restarted = await create();
+      assert.throws(() => restarted.readDraft(notes.id), /draft/i);
+      assert.deepEqual(await restarted.writeDraft(notes.id, { baseHash: base.hash, text: "replacement\n" }), { ok: false, reason: "write-failed" });
+      assert.deepEqual(await restarted.saveText(notes.id, { baseHash: base.hash, text: "replacement\n" }), { ok: false, reason: "write-failed" });
+      assert.equal(await readFile(join(work, "notes.txt"), "utf8"), "original\n");
+      restarted.discardDraft(notes.id);
+      setPersist(false);
+      await restarted.dispose();
+      assert.equal((await stat(file)).isFile(), true);
+    } finally {
+      await chmod(file, 0o600).catch(() => undefined);
+    }
+    assert.equal(await readFile(file, "utf8"), saved);
+  });
+});
+
+test("unreadable draft folders block replacement", { skip: process.platform === "win32" }, async () => {
+  await withText(async ({ service, add, create, userData }) => {
+    const notes = await add("notes.txt", "original\n");
+    const base = (await service.readText(notes.id, null)).content;
+    await service.writeDraft(notes.id, { baseHash: base.hash, text: "unsaved work\n" });
+    await service.dispose();
+    const directory = join(userData, "materials", "drafts");
+    await chmod(directory, 0o000);
+    let restarted;
+    try {
+      restarted = await create();
+      assert.throws(() => restarted.readDraft(notes.id), /draft/i);
+    } finally {
+      await chmod(directory, 0o700);
+    }
+    assert.deepEqual(await restarted.writeDraft(notes.id, { baseHash: base.hash, text: "replacement\n" }), { ok: false, reason: "write-failed" });
+    await restarted.flush();
+    assert.equal(JSON.parse(await readFile(join(directory, `${notes.id}.json`), "utf8")).text, "unsaved work\n");
+  });
+});
+
+test("missing sources keep drafts; only orphan files are collected", async () => {
+  await withText(async ({ service, add, create, userData, work }) => {
+    const notes = await add("notes.txt", "original\n");
+    const base = (await service.readText(notes.id, null)).content;
+    await service.writeDraft(notes.id, { baseHash: base.hash, text: "unsaved work\n" });
+    await service.dispose();
+    await unlink(join(work, "notes.txt"));
+    const directory = join(userData, "materials", "drafts");
+    await writeFile(join(directory, "11111111-1111-4111-8111-111111111111.json"), "orphan");
+    await writeFile(join(directory, `${notes.id}.json.tmp`), "interrupted write");
+    const restarted = await create();
+    assert.equal(restarted.readDraft(notes.id).text, "unsaved work\n");
+    assert.deepEqual((await readdir(directory)).sort(), [`${notes.id}.json`, `${notes.id}.json.tmp`].sort());
   });
 });
 

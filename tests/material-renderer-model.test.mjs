@@ -73,6 +73,7 @@ test("removal asks first only when CanvasTTY holds data the file on disk does no
   assert.equal(materialRemovalLosesData(material("a", 0, 0)), false);
   assert.equal(materialRemovalLosesData(material("a", 0, 0, { versions: [{ id: "v" }] })), true);
   assert.equal(materialRemovalLosesData(material("a", 0, 0, { location: null })), true);
+  assert.equal(materialRemovalLosesData(material("a", 0, 0, { draftError: "unreadable" })), true);
 });
 
 test("failures and rejections map to explained messages; cancelling says nothing", () => {

@@ -335,7 +335,7 @@ export function MaterialCard({
             hint={[
               t(locale, material.location === null
                 ? "materialRemoveCaptureHint"
-                : material.draft != null || pendingText.current ? "materialRemoveDraftHint" : "materialRemoveVersionsHint"),
+                : material.draft != null || material.draftError != null || pendingText.current ? "materialRemoveDraftHint" : "materialRemoveVersionsHint"),
               remarking.remarks.length > 0 ? `${t(locale, "materialRemoveRemarks")} ${remarking.remarks.length}.` : "",
               remarking.referencedBy > 0 ? t(locale, "materialRemoveReferences") : ""
             ].filter(Boolean).join(" ")}

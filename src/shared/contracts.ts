@@ -294,6 +294,7 @@ export interface CanvasMaterial extends SessionBounds {
   origin: MaterialOrigin | null;
   versions: MaterialVersion[];
   draft: MaterialDraftInfo | null;
+  draftError?: "unreadable";
   createdAt: number;
 }
 

@@ -125,6 +125,8 @@ export class MaterialService {
   private readonly blobs: MaterialBlobs;
   private readonly materials = new Map<string, StoredMaterial>();
   private readonly drafts = new Map<string, MaterialDraft>();
+  private readonly blockedDrafts = new Set<string>();
+  private draftsReadable = true;
   private draftQueue: Promise<void> = Promise.resolve();
   private remarks: MaterialRemark[] = [];
   private handoffs: MaterialHandoff[] = [];
@@ -371,6 +373,7 @@ export class MaterialService {
     return this.serial(async () => {
       const material = this.materials.get(id);
       if (!material || material.kind !== "text" || material.path === null) return failure("unavailable");
+      if (!this.canUseDraft(id)) return failure("write-failed");
       const parsed = parseTextEdit(edit);
       if (!parsed) return failure(tooLargeEdit(edit) ? "too-large" : "unavailable");
       const current = await this.readLiveText(material.path);
@@ -426,6 +429,7 @@ export class MaterialService {
   }
 
   readDraft(id: string): MaterialDraft | null {
+    if (!this.canUseDraft(id)) throw new Error("CanvasTTY could not read the saved text draft.");
     const draft = this.drafts.get(id);
     return draft ? { ...draft } : null;
   }
@@ -433,6 +437,7 @@ export class MaterialService {
   writeDraft(id: string, edit: unknown): Promise<MaterialResult> {
     const material = this.materials.get(id);
     if (!material || material.kind !== "text" || material.path === null) return Promise.resolve(failure("unavailable"));
+    if (!this.canUseDraft(id)) return Promise.resolve(failure("write-failed"));
     const parsed = parseTextEdit(edit, DRAFT_FILE_LIMIT);
     if (!parsed) return Promise.resolve(failure(tooLargeEdit(edit, DRAFT_FILE_LIMIT) ? "too-large" : "unavailable"));
     const candidate = { ...parsed, updatedAt: this.now() };
@@ -903,6 +908,7 @@ export class MaterialService {
       origin: material.origin ? structuredClone(material.origin) : null,
       versions: material.versions.map((version) => this.publicVersion(material, version)),
       draft: this.drafts.has(material.id) ? { baseHash: this.drafts.get(material.id)!.baseHash } : null,
+      draftError: material.kind === "text" && !this.canUseDraft(material.id) ? "unreadable" : undefined,
       createdAt: material.createdAt
     };
   }
@@ -997,7 +1003,7 @@ export class MaterialService {
       await mkdir(this.root, { recursive: true, mode: 0o700 });
       await writeFile(temporary, snapshot, { encoding: "utf8", mode: 0o600, flush: true });
       await rename(temporary, this.statePath);
-      if (!persist) {
+      if (!persist && this.draftsReadable && this.blockedDrafts.size === 0) {
         const cleanup = this.draftQueue.catch(() => undefined).then(() => rm(this.draftsPath, { recursive: true, force: true }));
         this.draftQueue = cleanup.catch(() => undefined);
         await cleanup;
@@ -1027,19 +1033,25 @@ export class MaterialService {
     let entries: string[];
     try {
       entries = await readdir(this.draftsPath);
-    } catch {
+    } catch (error) {
+      if (!isMissing(error)) this.draftsReadable = false;
       return;
     }
     for (const entry of entries) {
       const id = entry.endsWith(".json") ? entry.slice(0, -".json".length) : "";
+      if (!isId(id)) continue;
       const material = this.materials.get(id);
       const file = join(this.draftsPath, entry);
-      const read = material?.kind === "text" && material.path !== null ? await readBounded(file, DRAFT_FILE_LIMIT) : null;
+      if (!material) {
+        await rm(file, { force: true }).catch(() => undefined);
+        continue;
+      }
+      const read = material.kind === "text" && material.path !== null ? await readBounded(file, DRAFT_FILE_LIMIT) : null;
       const value = read?.ok ? parseJson(read.bytes.toString("utf8")) : null;
       const edit = parseTextEdit(value, DRAFT_FILE_LIMIT);
       const updatedAt = (value as { updatedAt?: unknown } | null)?.updatedAt;
       if (!edit || typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
-        await rm(file, { force: true }).catch(() => undefined);
+        this.blockedDrafts.add(id);
         continue;
       }
       this.drafts.set(id, { ...edit, updatedAt });
@@ -1047,8 +1059,9 @@ export class MaterialService {
   }
 
   private persistDraft(id: string): Promise<MaterialResult> {
+    if (!this.canUseDraft(id)) return Promise.resolve(failure("write-failed"));
     const draft = this.drafts.get(id);
-    if (!draft || !this.writable || !this.options.persist()) return Promise.resolve({ ok: true });
+    if (!draft || !this.options.persist()) return Promise.resolve({ ok: true });
     const file = join(this.draftsPath, `${id}.json`);
     const snapshot = JSON.stringify(draft);
     const write = this.draftQueue.catch(() => undefined).then(async (): Promise<MaterialResult> => {
@@ -1067,6 +1080,7 @@ export class MaterialService {
   }
 
   private dropDraft(id: string): boolean {
+    if (!this.canUseDraft(id)) return false;
     const existed = this.drafts.delete(id);
     if (!isId(id) || !this.writable) return existed;
     const file = join(this.draftsPath, `${id}.json`);
@@ -1075,6 +1089,7 @@ export class MaterialService {
   }
 
   private async dropDraftStrict(id: string): Promise<boolean> {
+    if (!this.canUseDraft(id)) throw new Error("CanvasTTY could not read the saved text draft.");
     const existed = this.drafts.delete(id);
     if (!isId(id) || !this.writable) return existed;
     const file = join(this.draftsPath, `${id}.json`);
@@ -1082,6 +1097,10 @@ export class MaterialService {
     this.draftQueue = removal.catch(() => undefined);
     await removal;
     return existed;
+  }
+
+  private canUseDraft(id: string): boolean {
+    return this.writable && this.draftsReadable && !this.blockedDrafts.has(id);
   }
 
   private serial<T>(task: () => Promise<T>): Promise<T> {

@@ -93,10 +93,10 @@ export function TextMaterialBody({
       if (id !== request.current) return;
       setLive(result.ok ? result.content : null);
       setFailure(result.ok ? null : result.reason);
-      onReadableRef.current(result.ok);
+      onReadableRef.current(result.ok && !material.draftError);
       if (!result.ok) onEditingChangeRef.current(false);
     });
-  }, [material.id, material.liveRevision, material.state]);
+  }, [material.id, material.liveRevision, material.state, material.draftError]);
 
   const flushDraft = (): void => {
     if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
@@ -138,6 +138,8 @@ export function TextMaterialBody({
       setDraftText(draft ? draft.text : live.text);
       setBaseHash(draft ? draft.baseHash : live.hash);
       setBaseText(!draft || draft.baseHash === live.hash ? live.text : null);
+    }).catch(() => {
+      if (!cancelled) setNotice({ kind: "failed", reason: "write-failed" });
     });
     return () => {
       cancelled = true;
@@ -268,9 +270,16 @@ export function TextMaterialBody({
   }
   if (!live) return <div className="material-text material-text--loading">{t(locale, "materialTextLoading")}</div>;
 
+  const draftNotice = material.draftError && (
+    <div className="material-text__banner material-text__banner--conflict" role="alert">
+      {t(locale, "materialTextDraftUnavailable")}
+    </div>
+  );
+
   if (editing) {
     return (
       <div className="material-text material-text--editing">
+        {draftNotice}
         {state === "conflict" && (
           <div className="material-text__banner material-text__banner--conflict" role="alert">
             <span>{t(locale, "materialTextConflict")}</span>
@@ -339,6 +348,7 @@ export function TextMaterialBody({
 
   return (
     <div className={`material-text ${drawing ? "material-text--drawing" : ""}`}>
+      {draftNotice}
       {material.draft && (
         <div className="material-text__banner" role="status">
           <span>{t(locale, "materialTextDraftBanner")}</span>

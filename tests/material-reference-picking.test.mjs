@@ -26,7 +26,7 @@ function picking(material, surface, draws) {
     clientY: 40,
     target: {
       closest: (selector) => selector === "[data-material-id]" ? { dataset: { materialId: material.id } }
-        : selector === ".material-annotator" && surface === "image" ? {} : null
+        : selector.split(",").map((value) => value.trim()).includes(surface === "image" ? ".material-annotator" : surface === "text" ? ".material-text__scroller" : "") ? {} : null
     },
     currentTarget: {
       setPointerCapture() {},
@@ -68,4 +68,11 @@ test("reference headers and files pick the whole material", () => {
     assert.equal(stopped, true);
     assert.deepEqual(draws, [{ id: kind, anchor: { kind: "whole" } }]);
   }
+});
+
+test("reference text keeps line selection", () => {
+  const draws = [];
+  const { stopped } = picking({ id: "text", kind: "text", state: "ready" }, "text", draws);
+  assert.equal(stopped, false);
+  assert.deepEqual(draws, []);
 });

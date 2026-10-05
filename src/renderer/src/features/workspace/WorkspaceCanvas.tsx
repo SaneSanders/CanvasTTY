@@ -985,7 +985,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
         if (remarkDraft?.picking && event.button === 0) {
           const materialId = element.closest<HTMLElement>("[data-material-id]")?.dataset.materialId;
           const material = materialId ? renderedMaterials.find((candidate) => candidate.id === materialId) : null;
-          if (material && remarkPickable(material) && !element.closest(".material-annotator")) {
+          if (material && remarkPickable(material) && !element.closest(".material-annotator, .material-text__scroller")) {
             event.preventDefault();
             event.stopPropagation();
             remarkActions.draw(material.id, { kind: "whole" });

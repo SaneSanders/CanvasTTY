@@ -558,6 +558,7 @@ export class HandoffService {
   }
 
   async prune(): Promise<void> {
+    if (this.options.materials.snapshot().loadError) return;
     let entries: string[];
     try {
       entries = await readdir(this.options.root);

@@ -157,7 +157,7 @@ export class MaterialService {
       state = restoreMaterialState(JSON.parse(await readFile(this.statePath, "utf8")));
     } catch (error) {
       const newStore = Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT")
-        && await this.blobs.usedBytes().then((bytes) => bytes === 0, () => false);
+        && await readdir(this.root).then((entries) => entries.length === 0, () => false);
       if (!newStore) {
         console.warn("CanvasTTY materials could not be loaded and are left on disk as they are.", error);
         this.loadError = "unreadable";
@@ -1040,14 +1040,6 @@ function remarkTransitionAllowed(from: MaterialRemark["status"], to: NonNullable
   if (to === "accepted") return from !== "accepted";
   if (to === "reopened") return from === "sent" || from === "reported" || from === "accepted";
   return from === "reopened";
-}
-
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
 }
 
 function anchorFits(material: StoredMaterial, anchor: RemarkAnchor): boolean {

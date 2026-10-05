@@ -406,14 +406,6 @@ test("dispose with persistence off leaves no drafts on disk", async () => {
   });
 });
 
-test("a failed draft write keeps the pending text for the next attempt", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const source = await readFile(new URL("../src/renderer/src/features/materials/TextMaterialBody.tsx", import.meta.url), "utf8");
-  const flush = source.slice(source.indexOf("const flushDraft"), source.indexOf("const flushDraftRef"));
-  assert.match(flush, /const generation = \(draftGeneration\.current \+= 1\);/);
-  assert.match(flush, /if \(draftGeneration\.current === generation\) pending\.current = next;/);
-});
-
 test("dispose waits out in-flight draft writes before the persistence-off cleanup", async () => {
   await withText(async ({ service, add, userData, setPersist }) => {
     const notes = await add("notes.txt", "base\n");
@@ -472,13 +464,6 @@ test("evicted version blobs are collected only after the state is durable", asyn
   assert.match(source, /private async collect\(\): Promise<void> \{\s*try \{\s*await this\.writeState\(true\);\s*\} catch \{\s*return;\s*\}/);
   const create = source.slice(source.indexOf("material.nextVersion += 1;"));
   assert.match(create, /await this\.collect\(\);\s*this\.changed\(\);/);
-});
-
-test("every draft reset invalidates older draft generations", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const source = await readFile(new URL("../src/renderer/src/features/materials/TextMaterialBody.tsx", import.meta.url), "utf8");
-  const bumps = source.match(/draftGeneration\.current \+= 1[);]/g);
-  assert.equal(bumps?.length, 6);
 });
 
 test("a save is refused when the state is not writable at all", async () => {

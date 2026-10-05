@@ -61,11 +61,10 @@ export function TextDiffView({
       role="table"
       aria-label={t(locale, "compareDifference")}
       data-canvas-wheel-priority="local"
-      onScroll={(event) => setMetrics((current) => ({
-        ...current,
-        scrollTop: event.currentTarget.scrollTop,
-        clientHeight: event.currentTarget.clientHeight
-      }))}
+      onScroll={(event) => {
+        const { scrollTop, clientHeight } = event.currentTarget;
+        setMetrics((current) => ({ ...current, scrollTop, clientHeight }));
+      }}
     >
       <p className="material-text-diff__legend">
         <span className="material-text-diff__legend-removed">{`− ${labels.before}`}</span>

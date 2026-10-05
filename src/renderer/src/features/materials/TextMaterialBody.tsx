@@ -22,6 +22,7 @@ import { TextDiffView } from "./TextDiffView";
 type Notice =
   | { kind: "saved"; kept: boolean }
   | { kind: "failed"; reason: MaterialFailure }
+  | { kind: "draft-failed"; reason: MaterialFailure }
   | { kind: "unkept"; reason: "quota" | "version-limit" }
   | null;
 
@@ -111,10 +112,17 @@ export function TextMaterialBody({
     }
     const generation = (draftGeneration.current += 1);
     void window.canvasTTY.materials.writeDraft(material.id, next).then((result) => {
+      if (draftGeneration.current !== generation) return;
       if (!result.ok) {
-        if (draftGeneration.current === generation) pending.current = next;
-        setNotice({ kind: "failed", reason: result.reason });
+        pending.current = next;
+        setNotice({ kind: "draft-failed", reason: result.reason });
+      } else {
+        setNotice((current) => current?.kind === "draft-failed" ? null : current);
       }
+    }).catch(() => {
+      if (draftGeneration.current !== generation) return;
+      pending.current = next;
+      setNotice({ kind: "draft-failed", reason: "write-failed" });
     });
   };
   const flushDraftRef = useRef(flushDraft);
@@ -124,9 +132,6 @@ export function TextMaterialBody({
   useEffect(() => {
     if (editing) return;
     flushDraftRef.current();
-    setDraftText(null);
-    setBaseHash(null);
-    setBaseText(null);
     setShowingDiff(false);
   }, [editing]);
 
@@ -275,6 +280,9 @@ export function TextMaterialBody({
       {t(locale, "materialTextDraftUnavailable")}
     </div>
   );
+  const failureText = notice?.kind === "draft-failed"
+    ? t(locale, "materialTextDraftNotKept")
+    : notice?.kind === "failed" ? t(locale, textFailureKey(notice.reason)) : null;
 
   if (editing) {
     return (
@@ -318,9 +326,9 @@ export function TextMaterialBody({
           />
         )}
         <footer className="material-text__status">
-          <span className={notice?.kind === "failed" ? "material-text__status-error" : ""}>
-            {notice?.kind === "failed"
-              ? t(locale, textFailureKey(notice.reason))
+          <span className={failureText ? "material-text__status-error" : ""}>
+            {failureText
+              ? failureText
               : notice?.kind === "saved"
                 ? t(locale, notice.kept ? "materialTextSaved" : "materialTextSavedNoVersion")
                 : state === "clean" ? t(locale, "materialTextNoChanges") : t(locale, "materialTextUnsaved")}
@@ -349,11 +357,12 @@ export function TextMaterialBody({
   return (
     <div className={`material-text ${drawing ? "material-text--drawing" : ""}`}>
       {draftNotice}
-      {material.draft && (
+      {failureText && <div className="material-text__banner material-text__banner--conflict" role="alert">{failureText}</div>}
+      {(material.draft || state !== "clean") && (
         <div className="material-text__banner" role="status">
           <span>{t(locale, "materialTextDraftBanner")}</span>
           <button type="button" onClick={() => onEditingChange(true)}><UiIcon name="pencil" size="1em" />{t(locale, "materialTextContinue")}</button>
-          <button type="button" onClick={() => { draftGeneration.current += 1; pending.current = null; void window.canvasTTY.materials.discardDraft(material.id); }}>{t(locale, "materialTextDiscard")}</button>
+          <button type="button" onClick={resetToDisk}>{t(locale, "materialTextDiscard")}</button>
         </div>
       )}
       <div

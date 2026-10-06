@@ -531,7 +531,7 @@ button { border: 0; }
 .handoff-dialog__body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 22px; }
 .handoff-dialog__form, .handoff-dialog__preview { min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
 .handoff-dialog h3 { margin: 8px 0 2px; color: var(--text-muted-on-dark); font-size: 11px; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; }
-.handoff-dialog__sessions { display: grid; gap: 6px; }
+.handoff-dialog__sessions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .handoff-dialog__session { min-height: 50px; padding: 7px 10px; display: flex; align-items: center; gap: 10px; border-radius: 12px; color: var(--text); background: var(--surface-soft); text-align: left; cursor: pointer; }
 .handoff-dialog__session > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .handoff-dialog__session strong, .handoff-dialog__session small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

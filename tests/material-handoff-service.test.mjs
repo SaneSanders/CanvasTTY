@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { access, mkdir, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { IPC } from "../src/shared/contracts.ts";
+import { terminalFileQuotePath } from "../src/shared/terminalFileDrop.ts";
 import { HandoffService } from "../src/main/services/materials/HandoffService.ts";
 import { pngBytes, withMaterials } from "./material-fixtures.mjs";
 
 const START = "\x1b[200~";
 const END = "\x1b[201~";
 const CLAUDE_IDLE = "────\r\n❯ \r\n────\r\n";
-const IMAGE_LINE = /^\/.*\.(png|jpe?g|gif|webp)$/i;
+const IMAGE_LINE = /^(?:\/|[A-Za-z]:[\\/]|\\\\).*\.(png|jpe?g|gif|webp)$/i;
 
 class FakeTerminal {
   constructor() {
@@ -100,11 +101,28 @@ function claudeTui(terminal) {
   };
 }
 
-function codexToken(pasted) {
-  const quoted = /^'((?:[^']|'\\'')*)'$/.exec(pasted);
-  if (quoted) return quoted[1].replace(/'\\''/g, "'");
+function codexToken(pasted, platform = process.platform) {
+  const quoted = (platform === "win32" ? /^'((?:[^']|'')*)'$/ : /^'((?:[^']|'"'"'|'\\'')*)'$/).exec(pasted);
+  if (quoted) return platform === "win32" ? quoted[1].replaceAll("''", "'") : quoted[1].replace(/'"'"'|'\\''/g, "'");
   return /\s/.test(pasted) ? null : pasted;
 }
+
+test("image paths preserve native quoting", () => {
+  for (const [platform, path, quoted] of [
+    ["linux", "/tmp/with spaces/hero.png", "'/tmp/with spaces/hero.png'"],
+    ["linux", "/tmp/it's/hero.png", "'/tmp/it'\"'\"'s/hero.png'"],
+    ["win32", "C:\\fixtures with spaces\\hero.png", "'C:\\fixtures with spaces\\hero.png'"],
+    ["win32", "C:\\it's\\hero.png", "'C:\\it''s\\hero.png'"],
+    ["win32", "\\\\server\\share\\hero.png", "'\\\\server\\share\\hero.png'"]
+  ]) {
+    assert.equal(terminalFileQuotePath(path, platform), quoted);
+    assert.equal(codexToken(quoted, platform), path);
+    assert.equal(IMAGE_LINE.test(path), true);
+  }
+  for (const path of ["hero.png", "C:hero.png", "https://example.com/hero.png"]) assert.equal(IMAGE_LINE.test(path), false);
+  assert.equal(codexToken("'/tmp/a.png' '/tmp/b.png'", "linux"), null);
+  assert.equal(codexToken("'C:\\a.png' 'C:\\b.png'", "win32"), null);
+});
 
 function codexTui(terminal) {
   let images = 0;
@@ -175,7 +193,7 @@ test("Claude Code gets one paste with its images as bare lines, and Enter only a
     assert.equal(terminal.writes.length, 2);
     assert.equal(terminal.writes[1], "\r");
     const pasted = terminal.writes[0].slice(START.length, -END.length).split("\n");
-    assert.deepEqual(pasted.filter((line) => IMAGE_LINE.test(line)).map((line) => line.split("/").at(-1)),
+    assert.deepEqual(pasted.filter((line) => IMAGE_LINE.test(line)).map((line) => basename(line)),
       ["1-hero-v1-marked.png", "1-hero-v1-crop.png"]);
     assert.deepEqual({ state: handoff.delivery.state, expected: handoff.delivery.imagesExpected, attached: handoff.delivery.imagesAttached },
       { state: "submitted", expected: 2, attached: 2 });
@@ -254,7 +272,7 @@ test("unobserved paste stays pending", async () => {
     assert.equal(result.ok, true);
     assert.equal(terminal.writes.length, 1);
     assert.ok(terminal.writes[0].endsWith(END));
-    assert.match(terminal.writes[0], /Images \(open them\):\n- `\/.*1-hero-v1-marked\.png`/);
+    assert.ok(terminal.writes[0].includes("Images (open them):\n- `" + join(result.handoff.folder, "1-hero-v1-marked.png") + "`"));
     assert.deepEqual({ state: result.handoff.delivery.state, note: result.handoff.delivery.note, attached: result.handoff.delivery.imagesAttached },
       { state: "pasted", note: "not-observed", attached: 0 });
     assert.equal(materials.remark(remark.id).status, "open");
@@ -355,10 +373,13 @@ test("the handoff file always holds every remark, even when the paste only point
 });
 
 test("control characters in names, remarks and notes never reach the terminal", async () => {
-  await withHandoffs(async ({ materials, handoffs, terminal, work, draft }) => {
-    await writeFile(join(work, "evil\x1b[201~\x1b[Z\rrun.txt"), "text\n");
-    await materials.addPaths([join(work, "evil\x1b[201~\x1b[Z\rrun.txt")], { x: 0, y: 0 });
-    const evil = materials.snapshot().materials.find((material) => material.name.startsWith("evil"));
+  await withHandoffs(async ({ materials, handoffs, terminal, draft }) => {
+    const captured = await materials.addCapture({
+      name: "evil\x1b[201~\x1b[Z\rrun.txt", bytes: Buffer.from("text\n"), mimeType: "text/plain",
+      origin: { kind: "clipboard" }, point: { x: 0, y: 0 }
+    });
+    assert.equal(captured.ok, true);
+    const evil = materials.material(captured.materialId);
     const remark = (await materials.addRemark({ materialId: evil.id, anchor: { kind: "whole" }, reference: null, text: "fix\x07 it\x1b[201~" })).remark;
     terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
     const result = await handoffs.send(draft("q1", { remarkIds: [remark.id], note: "note\r\x1b[Z" }));
@@ -484,12 +505,13 @@ test("drawn bytes obey shared quota", async () => {
     const first = await handoffs.send(draft("q1"));
     assert.equal(first.ok, true);
     const request = draft("q2");
+    assert.equal((await handoffs.preview(request)).ok, true);
     assert.deepEqual(await handoffs.send(request), { ok: false, reason: "quota" });
     assert.equal(materials.handoff(request.id).delivery.state, "failed");
     assert.equal(terminal.writes.length, 1);
     await access(join(first.handoff.folder, "handoff.md"));
     assert.deepEqual(await readdir(packages), [first.handoff.id]);
-  }, { foldersBytesLimit: 5_000, images: { canDraw: () => true, marked: async () => Buffer.alloc(1_500), crop: async () => null } });
+  }, { foldersBytesLimit: 64 * 1024, images: { canDraw: () => true, marked: async () => Buffer.alloc(48 * 1024), crop: async () => null } });
 });
 
 test("pending history survives failed attempts", async () => {

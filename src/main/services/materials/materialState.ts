@@ -295,7 +295,7 @@ function normalizeMaterial(value: unknown): StoredMaterial | null {
   if (!isRecord(value)) return null;
   const { id, kind, name, mimeType, position, size, path, identity, origin, createdAt, versions, nextVersion } = value;
   if (!isId(id)) return null;
-  if (typeof kind !== "string" || !(kind in KINDS)) return null;
+  if (typeof kind !== "string" || !Object.hasOwn(KINDS, kind)) return null;
   if (typeof name !== "string" || name.length === 0 || name.length > MAX_NAME) return null;
   if (typeof mimeType !== "string" || !MIME_PATTERN.test(mimeType)) return null;
   if (!isPoint(position) || !isSize(size)) return null;

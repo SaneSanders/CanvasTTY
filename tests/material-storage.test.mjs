@@ -46,6 +46,9 @@ for (const [name, damage] of [
   ["unknown material fields", (state) => { state.materials[0].futureData = []; return JSON.stringify(state); }],
   ["unknown version fields", (state) => { state.materials[0].versions[0].futureData = []; return JSON.stringify(state); }],
   ["invalid material", (state) => { state.materials[0].kind = "unknown"; return JSON.stringify(state); }],
+  ...["constructor", "toString", "__proto__"].map((kind) => [
+    `inherited kind ${kind}`, (state) => { state.materials[0].kind = kind; return JSON.stringify(state); }
+  ]),
   ["invalid version", (state) => { state.materials[0].versions[0].reason = "unknown"; return JSON.stringify(state); }]
 ]) {
   test(`preserves ${name}`, async () => {

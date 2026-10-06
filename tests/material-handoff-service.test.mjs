@@ -247,7 +247,7 @@ test("a Codex prompt drawn before the kept output was trimmed still counts as em
   });
 });
 
-test("agents whose screen CanvasTTY cannot see get the text pasted with image paths, and it counts as sent once their turn starts", async () => {
+test("unobserved paste stays pending", async () => {
   await withHandoffs(async ({ materials, handoffs, terminal, remark, draft }) => {
     terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
     const result = await handoffs.send(draft("q1"));
@@ -260,8 +260,8 @@ test("agents whose screen CanvasTTY cannot see get the text pasted with image pa
     assert.equal(materials.remark(remark.id).status, "open");
     terminal.setStatus("q1", "working");
     const confirmed = materials.handoff(result.handoff.id).delivery;
-    assert.deepEqual({ state: confirmed.state, started: confirmed.turnStartedAt !== null }, { state: "submitted", started: true });
-    assert.deepEqual({ status: materials.remark(remark.id).status, handoffs: materials.remark(remark.id).handoffIds }, { status: "sent", handoffs: [result.handoff.id] });
+    assert.deepEqual({ state: confirmed.state, started: confirmed.turnStartedAt !== null }, { state: "pasted", started: false });
+    assert.deepEqual({ status: materials.remark(remark.id).status, handoffs: materials.remark(remark.id).handoffIds }, { status: "open", handoffs: [] });
   });
 });
 
@@ -396,6 +396,154 @@ test("old handoff packages are pruned by count and by their total size, newest f
     await handoffs.prune();
     assert.deepEqual(await readdir(packages), ["new"]);
   }, { foldersBytesLimit: 100 });
+});
+
+test("sending packages survive pruning", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft, packages }) => {
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    const started = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    terminal.deliverInput = async () => { started.resolve(); await release.promise; return { delivered: true }; };
+    const request = draft("q1");
+    const pending = handoffs.send(request);
+    try {
+      await started.promise;
+      await mkdir(join(packages, "later"));
+      await writeFile(join(packages, "later", "copy"), Buffer.alloc(4_000));
+      const time = new Date(Date.now() + 60_000);
+      await utimes(join(packages, "later"), time, time);
+      await handoffs.prune();
+      await access(join(packages, request.id, "handoff.md"));
+      assert.deepEqual(await readdir(packages), [request.id]);
+    } finally {
+      release.resolve();
+      await pending;
+    }
+  }, { foldersBytesLimit: 4_000 });
+});
+
+test("pending paste survives pruning", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft, packages }) => {
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    const result = await handoffs.send(draft("q1"));
+    await mkdir(join(packages, "later"));
+    await writeFile(join(packages, "later", "copy"), Buffer.alloc(4_000));
+    const time = new Date(Date.now() + 60_000);
+    await utimes(join(packages, "later"), time, time);
+    await handoffs.prune();
+    await access(join(result.handoff.folder, "handoff.md"));
+    terminal.sessions[0].startedAt = 2;
+    await mkdir(join(packages, "later"));
+    await writeFile(join(packages, "later", "copy"), Buffer.alloc(4_000));
+    await utimes(join(packages, "later"), time, time);
+    await handoffs.prune();
+    assert.deepEqual(await readdir(packages), ["later"]);
+  }, { foldersBytesLimit: 4_000 });
+});
+
+test("working turn retains its package", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft, packages }) => {
+    terminal.add({ id: "s1", provider: "claude", cwd: "/work" });
+    terminal.tui = claudeTui(terminal);
+    const result = await handoffs.send(draft("s1"));
+    assert.equal(result.handoff.delivery.state, "submitted");
+    assert.notEqual(result.handoff.delivery.turnStartedAt, null);
+    await mkdir(join(packages, "later"));
+    await writeFile(join(packages, "later", "copy"), Buffer.alloc(4_000));
+    const time = new Date(Date.now() + 60_000);
+    await utimes(join(packages, "later"), time, time);
+    await handoffs.prune();
+    await access(join(result.handoff.folder, "handoff.md"));
+    terminal.setStatus("s1", "idle");
+    await mkdir(join(packages, "later"));
+    await writeFile(join(packages, "later", "copy"), Buffer.alloc(4_000));
+    await utimes(join(packages, "later"), time, time);
+    await handoffs.prune();
+    assert.deepEqual(await readdir(packages), ["later"]);
+  }, { foldersBytesLimit: 4_000 });
+});
+
+test("protected bytes block delivery", async () => {
+  await withHandoffs(async ({ handoffs, terminal, draft, packages }) => {
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    terminal.add({ id: "q2", provider: "qwen", cwd: "/work" });
+    const first = await handoffs.send(draft("q1"));
+    assert.equal(first.ok, true);
+    const request = draft("q2");
+    assert.deepEqual(await handoffs.send(request), { ok: false, reason: "quota" });
+    assert.equal(terminal.writes.length, 1);
+    await access(join(first.handoff.folder, "handoff.md"));
+    assert.deepEqual(await readdir(packages), [first.handoff.id]);
+  }, { foldersBytesLimit: 5_000, images: { canDraw: () => true, marked: async () => Buffer.alloc(3_000), crop: async () => null } });
+});
+
+test("drawn bytes obey shared quota", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, draft, packages }) => {
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    terminal.add({ id: "q2", provider: "qwen", cwd: "/work" });
+    const first = await handoffs.send(draft("q1"));
+    assert.equal(first.ok, true);
+    const request = draft("q2");
+    assert.deepEqual(await handoffs.send(request), { ok: false, reason: "quota" });
+    assert.equal(materials.handoff(request.id).delivery.state, "failed");
+    assert.equal(terminal.writes.length, 1);
+    await access(join(first.handoff.folder, "handoff.md"));
+    assert.deepEqual(await readdir(packages), [first.handoff.id]);
+  }, { foldersBytesLimit: 5_000, images: { canDraw: () => true, marked: async () => Buffer.alloc(1_500), crop: async () => null } });
+});
+
+test("pending history survives failed attempts", async () => {
+  let broken = false;
+  await withHandoffs(async ({ materials, handoffs, terminal, draft }) => {
+    terminal.add({ id: "q1", provider: "qwen", cwd: "/work" });
+    terminal.add({ id: "q2", provider: "qwen", cwd: "/work" });
+    const first = await handoffs.send(draft("q1"));
+    broken = true;
+    for (let index = 0; index < 205; index += 1) assert.deepEqual(await handoffs.send(draft("q2")), { ok: false, reason: "unreadable" });
+    assert.equal(materials.snapshot().handoffs.length, 200);
+    assert.equal(materials.handoff(first.handoff.id)?.delivery.state, "pasted");
+    await access(join(first.handoff.folder, "handoff.md"));
+    assert.equal(terminal.writes.length, 1);
+  }, { images: { canDraw: () => true, marked: async () => { if (broken) throw new Error("unreadable"); return Buffer.from("marked"); }, crop: async () => null } });
+});
+
+test("failed history does not hide submitted turns", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, draft }) => {
+    terminal.add({ id: "s1", provider: "claude", cwd: "/work", status: "unavailable" });
+    const render = claudeTui(terminal);
+    terminal.tui = (id, data) => { if (data !== "\r") render(id, data); };
+    const first = await handoffs.send(draft("s1"));
+    assert.equal(first.handoff.delivery.state, "submitted");
+    assert.equal(first.handoff.delivery.turnStartedAt, null);
+    materials.recordHandoff({ ...first.handoff, id: randomUUID(), number: 2, delivery: { ...first.handoff.delivery, state: "failed" } });
+    terminal.setStatus("s1", "working");
+    assert.notEqual(materials.handoff(first.handoff.id).delivery.turnStartedAt, null);
+    terminal.setStatus("s1", "idle");
+    assert.notEqual(materials.handoff(first.handoff.id).delivery.turnEndedAt, null);
+  });
+});
+
+test("protected folders block delivery", async () => {
+  await withHandoffs(async ({ materials, handoffs, terminal, draft, packages }) => {
+    await mkdir(packages, { recursive: true });
+    for (let number = 1; number <= 50; number += 1) {
+      const id = randomUUID();
+      const sessionId = `q${number}`;
+      terminal.add({ id: sessionId, provider: "qwen", cwd: "/work" });
+      const folder = join(packages, id);
+      await mkdir(folder);
+      await writeFile(join(folder, "handoff.md"), "pending");
+      materials.recordHandoff({
+        id, number, createdAt: 1, sessionId, sessionTitle: sessionId, provider: "qwen", remarkIds: [], items: [], note: "", folder,
+        resultsFolder: null, sessionStartedAt: 1,
+        delivery: { state: "pasted", imagesExpected: 0, imagesAttached: 0, sentAt: 1, turnStartedAt: null, turnEndedAt: null, note: "not-observed", error: null, stateSaved: true }
+      });
+    }
+    terminal.add({ id: "new", provider: "qwen", cwd: "/work" });
+    assert.deepEqual(await handoffs.send(draft("new")), { ok: false, reason: "quota" });
+    assert.equal(terminal.writes.length, 0);
+    assert.equal((await readdir(packages)).length, 50);
+  });
 });
 
 test("unreadable state prevents package pruning", async () => {
@@ -772,14 +920,22 @@ test("drawn images are charged once: a package inside the estimate but under the
 });
 
 test("a handoff refuses delivery while the state cannot be persisted", async () => {
-  await withHandoffs(async ({ handoffs, terminal, draft, packages }) => {
+  await withHandoffs(async ({ materials, handoffs, terminal, draft, packages }) => {
     terminal.add({ provider: "claude", id: "s1" });
     const blocked = join(packages, "..", "state.json.tmp");
     await mkdir(blocked);
-    const result = await handoffs.send(draft("s1"));
+    const request = draft("s1");
+    const result = await handoffs.send(request);
     assert.deepEqual({ ok: result.ok, reason: result.ok ? null : result.reason }, { ok: false, reason: "unavailable" });
     assert.equal(terminal.writes.length, 0, "nothing reached the terminal");
+    const failed = materials.handoff(request.id).delivery;
+    assert.equal(failed.state, "failed");
+    assert.equal(failed.stateSaved, false);
+    assert.notEqual(failed.error, null);
+    assert.deepEqual(await handoffs.send(request), { ok: false, reason: "already-sent" });
     await rm(blocked, { recursive: true });
+    terminal.tui = claudeTui(terminal);
+    assert.equal((await handoffs.send(draft("s1"))).handoff.delivery.state, "submitted");
   });
 });
 

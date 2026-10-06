@@ -101,6 +101,13 @@ interface HandoffPlan {
   text: HandoffTextInput;
   resultsFolder: string | null;
   warnings: HandoffWarning[];
+  availableBytes: number;
+}
+
+interface HandoffFolder {
+  path: string;
+  time: number;
+  bytes: number;
 }
 
 type Checked = { ok: true; plan: HandoffPlan } | { ok: false; reason: HandoffBlock | MaterialFailure };
@@ -148,33 +155,9 @@ export class HandoffService {
     if (this.sending.has(sessionId)) return { ok: false, reason: "busy" };
     this.sending.add(sessionId);
     try {
-      const reserved = await this.exclusive(() => this.reserve(draft, sessionId));
+      const reserved = await this.exclusive(() => this.prepare(draft, sessionId));
       if (!reserved.ok) return reserved;
       const { plan, screen } = reserved;
-      let unwritten: "too-long" | "unreadable" | null = null;
-      try {
-        if (await this.writePackage(plan)) {
-          await writeFile(join(plan.folder, "handoff.md"), `${handoffText(plan.text)}\n`, { encoding: "utf8", mode: 0o600 });
-        } else {
-          unwritten = "too-long";
-        }
-      } catch {
-        unwritten = "unreadable";
-      }
-      if (unwritten) {
-        await rm(plan.folder, { recursive: true, force: true }).catch(() => undefined);
-        this.options.materials.updateHandoffDelivery(plan.id, {
-          state: "failed",
-          error: unwritten === "too-long" ? "The handoff files would exceed the package limit." : "The handoff files could not be written."
-        });
-        return { ok: false, reason: unwritten };
-      }
-      this.options.materials.updateHandoffDelivery(plan.id, { imagesExpected: plan.text.images.length });
-      try {
-        await this.options.materials.flush(true);
-      } catch {
-        return { ok: false, reason: "unavailable" };
-      }
       let outcome: Partial<HandoffDelivery>;
       try {
         outcome = await this.deliver(plan, this.compose(plan), screen);
@@ -220,11 +203,10 @@ export class HandoffService {
       }
     }
     const latest = this.options.materials.latestHandoff(session.id);
-    if (!latest || latest.delivery.sentAt === null) return;
+    if (!latest || latest.delivery.state !== "submitted" || latest.delivery.sentAt === null) return;
     if (latest.sessionStartedAt !== null && session.startedAt !== latest.sessionStartedAt) return;
     const now = this.now();
     if (latest.delivery.turnStartedAt === null && session.status === "working" && now - latest.delivery.sentAt <= TURN_START_WINDOW_MS) {
-      this.options.materials.confirmDelivery(latest.id);
       this.options.materials.updateHandoffDelivery(latest.id, { turnStartedAt: now });
     } else if (latest.delivery.turnStartedAt !== null && latest.delivery.turnEndedAt === null
       && (session.status === "idle" || session.status === "done" || session.status === "failed")) {
@@ -243,6 +225,43 @@ export class HandoffService {
     return run;
   }
 
+  private async prepare(draft: unknown, sessionId: string): Promise<Reserved> {
+    const reserved = await this.reserve(draft, sessionId);
+    if (!reserved.ok) return reserved;
+    const { plan } = reserved;
+    const textBytes = Buffer.byteLength(`${handoffText(plan.text)}\n`, "utf8");
+    const filesLimit = Math.min(this.packageLimit(), plan.availableBytes - textBytes);
+    let unwritten: "too-long" | "quota" | "unreadable" | null = null;
+    try {
+      if (await this.writePackage(plan, filesLimit)) {
+        await writeFile(join(plan.folder, "handoff.md"), `${handoffText(plan.text)}\n`, { encoding: "utf8", mode: 0o600 });
+        await this.prunePackages();
+      } else {
+        unwritten = filesLimit < this.packageLimit() ? "quota" : "too-long";
+      }
+    } catch {
+      unwritten = "unreadable";
+    }
+    if (unwritten) {
+      await rm(plan.folder, { recursive: true, force: true }).catch(() => undefined);
+      this.options.materials.updateHandoffDelivery(plan.id, {
+        state: "failed",
+        error: unwritten === "unreadable" ? "The handoff files could not be written." : "The handoff files would exceed the storage limit."
+      });
+      return { ok: false, reason: unwritten };
+    }
+    this.options.materials.updateHandoffDelivery(plan.id, { imagesExpected: plan.text.images.length });
+    try {
+      await this.options.materials.flush(true);
+    } catch {
+      this.options.materials.updateHandoffDelivery(plan.id, {
+        state: "failed", error: "The handoff state could not be saved.", stateSaved: false
+      });
+      return { ok: false, reason: "unavailable" };
+    }
+    return reserved;
+  }
+
   private async reserve(draft: unknown, sessionId: string): Promise<Reserved> {
     const checked = await this.check(draft, true);
     if (!checked.ok) return checked;
@@ -250,6 +269,7 @@ export class HandoffService {
     const screen = this.screenFor(sessionId);
     const blocked = await this.composerBlock(plan, screen);
     if (blocked) return { ok: false, reason: blocked };
+    const protectedPaths = this.protectedFolders();
     this.options.materials.recordHandoff({
       id: plan.id,
       number: plan.number,
@@ -274,7 +294,7 @@ export class HandoffService {
         error: null,
         stateSaved: true
       }
-    });
+    }, this.options.materials.snapshot().handoffs.filter((handoff) => protectedPaths.has(handoff.folder)).map((handoff) => handoff.id));
     return { ok: true, plan, screen };
   }
 
@@ -374,6 +394,11 @@ export class HandoffService {
     if (strict && handoffPointerText(text, join(folder, "handoff.md")).length > HANDOFF_TEXT_LIMIT) {
       return { ok: false, reason: "too-long" };
     }
+    const available = await this.remainingCapacity().catch(() => null);
+    if (!available) return { ok: false, reason: "unreadable" };
+    if (available.folders >= HANDOFF_FOLDER_LIMIT || packageBytes(files) + Buffer.byteLength(`${handoffText(text)}\n`, "utf8") > available.bytes) {
+      return { ok: false, reason: "quota" };
+    }
     return {
       ok: true,
       plan: {
@@ -386,7 +411,8 @@ export class HandoffService {
         files,
         text,
         resultsFolder: parsed.resultsFolder,
-        warnings
+        warnings,
+        availableBytes: available.bytes
       }
     };
   }
@@ -442,14 +468,16 @@ export class HandoffService {
     return text.length <= HANDOFF_TEXT_LIMIT ? text : handoffPointerText(plan.text, join(plan.folder, "handoff.md"));
   }
 
-  private async writePackage(plan: HandoffPlan): Promise<boolean> {
+  private async writePackage(plan: HandoffPlan, limit: number): Promise<boolean> {
     await mkdir(plan.folder, { recursive: true, mode: 0o700 });
     const produced = new Set<string>();
-    let total = plan.files.filter((file) => file.operation === "copy").reduce((sum, file) => sum + file.byteSize, 0);
+    let total = 0;
     for (const file of plan.files) {
       const target = join(plan.folder, file.name);
       if (file.operation === "copy") {
         await copyFile(file.source, target, constants.COPYFILE_FICLONE);
+        total += (await lstat(target)).size;
+        if (total > limit) return false;
         produced.add(file.name);
         continue;
       }
@@ -458,7 +486,7 @@ export class HandoffService {
         : await this.options.images.crop(file.source, file.rect!, file.natural!);
       if (!bytes) continue;
       total += bytes.byteLength;
-      if (total > this.packageLimit()) return false;
+      if (total > limit) return false;
       await writeFile(target, bytes, { mode: 0o600 });
       produced.add(file.name);
     }
@@ -557,34 +585,73 @@ export class HandoffService {
     this.screens.delete(id);
   }
 
-  async prune(): Promise<void> {
-    if (this.options.materials.snapshot().loadError) return;
-    let entries: string[];
-    try {
-      entries = await readdir(this.options.root);
-    } catch {
-      return;
+  prune(): Promise<void> {
+    return this.exclusive(() => this.prunePackages());
+  }
+
+  private protectedFolders(): Set<string> {
+    const protectedPaths = new Set<string>();
+    const sessions = new Map(this.options.terminals.listMetadata().map((session) => [session.id, session]));
+    const delivered = new Set<string>();
+    for (const handoff of this.options.materials.snapshot().handoffs.slice().reverse()) {
+      if (handoff.delivery.state === "sending") protectedPaths.add(handoff.folder);
+      if (handoff.delivery.state !== "pasted" && handoff.delivery.state !== "submitted") continue;
+      if (delivered.has(handoff.sessionId)) continue;
+      const session = sessions.get(handoff.sessionId);
+      if (!session || session.exitCode !== null || session.status === "done" || session.status === "failed"
+        || (handoff.sessionStartedAt !== null && handoff.sessionStartedAt !== session.startedAt)) continue;
+      delivered.add(handoff.sessionId);
+      if (handoff.delivery.state === "pasted" || handoff.delivery.turnEndedAt === null) protectedPaths.add(handoff.folder);
     }
+    return protectedPaths;
+  }
+
+  private async remainingCapacity(): Promise<{ folders: number; bytes: number }> {
+    const protectedPaths = this.protectedFolders();
+    const folders = (await this.packageFolders()).filter((folder) => protectedPaths.has(folder.path));
+    return {
+      folders: folders.length,
+      bytes: Math.max(0, this.foldersBytesLimit() - folders.reduce((sum, folder) => sum + folder.bytes, 0))
+    };
+  }
+
+  private async packageFolders(): Promise<HandoffFolder[]> {
+    const entries = await readdir(this.options.root).catch((error) => {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+      throw error;
+    });
     const folders = await Promise.all(entries.map(async (entry) => {
       const path = join(this.options.root, entry);
-      try {
-        const info = await lstat(path);
-        return info.isDirectory() ? { path, time: info.mtimeMs, bytes: await folderBytes(path) } : null;
-      } catch {
-        return null;
-      }
+      const info = await lstat(path).catch(() => null);
+      if (!info?.isDirectory()) return null;
+      return { path, time: info.mtimeMs, bytes: await folderBytes(path).catch(() => this.foldersBytesLimit()) };
     }));
-    let kept = 0;
-    let bytes = 0;
-    const stale = folders
-      .filter((folder): folder is { path: string; time: number; bytes: number } => folder !== null)
-      .sort((left, right) => right.time - left.time)
-      .filter((folder) => {
-        bytes += folder.bytes;
-        kept += 1;
-        return kept > HANDOFF_FOLDER_LIMIT || (kept > 1 && bytes > (this.options.foldersBytesLimit ?? HANDOFF_FOLDERS_BYTES_LIMIT));
-      });
+    return folders.filter((folder): folder is HandoffFolder => folder !== null).sort((left, right) => right.time - left.time);
+  }
+
+  private async prunePackages(): Promise<void> {
+    if (this.options.materials.snapshot().loadError) return;
+    const protectedPaths = this.protectedFolders();
+    const folders = await this.packageFolders();
+    const protectedPackages = folders.filter((folder) => protectedPaths.has(folder.path));
+    let kept = protectedPackages.length;
+    let bytes = protectedPackages.reduce((sum, folder) => sum + folder.bytes, 0);
+    let exhausted = false;
+    const stale = folders.filter((folder) => {
+      if (protectedPaths.has(folder.path)) return false;
+      if (exhausted || kept >= HANDOFF_FOLDER_LIMIT || (kept > 0 && bytes + folder.bytes > this.foldersBytesLimit())) {
+        exhausted = true;
+        return true;
+      }
+      kept += 1;
+      bytes += folder.bytes;
+      return false;
+    });
     await Promise.all(stale.map((folder) => rm(folder.path, { recursive: true, force: true })));
+  }
+
+  private foldersBytesLimit(): number {
+    return this.options.foldersBytesLimit ?? HANDOFF_FOLDERS_BYTES_LIMIT;
   }
 
   private packageLimit(): number {

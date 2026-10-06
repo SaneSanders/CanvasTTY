@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type BigIntStats } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type {
@@ -58,6 +58,7 @@ import { DirectoryWatchSet, nodeWatchFactory, type WatchFactory } from "./materi
 
 const MAX_NAME = 255;
 const MATERIAL_CAPTURE_MAX_BYTES = 32 * 1024 * 1024;
+const READ_FILE_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 const PERSIST_DELAY_MS = 250;
 const REFRESH_DELAY_MS = 150;
 const POLL_INTERVAL_MS = 10_000;
@@ -254,7 +255,13 @@ export class MaterialService {
           continue;
         }
         const type = materialType(basename(resolved));
-        const natural = type.kind === "image" ? await readImageDimensions(resolved) : null;
+        let natural: Size | null = null;
+        try {
+          if (type.kind === "image") natural = await readImageDimensions(resolved);
+        } catch {
+          result.rejected.push({ name, reason: "unreadable" });
+          continue;
+        }
         const material: StoredMaterial = {
           id: randomUUID(),
           kind: type.kind,
@@ -482,9 +489,16 @@ export class MaterialService {
     return this.counters.handoff + 1;
   }
 
-  recordHandoff(handoff: MaterialHandoff): void {
+  recordHandoff(handoff: MaterialHandoff, retainedIds: readonly string[] = []): void {
     this.counters.handoff = Math.max(this.counters.handoff, handoff.number);
-    this.handoffs = [...this.handoffs, structuredClone(handoff)].slice(-HANDOFF_LIMIT);
+    const retained = new Set([...retainedIds, handoff.id]);
+    const handoffs = [...this.handoffs, structuredClone(handoff)];
+    let discard = Math.max(0, handoffs.length - HANDOFF_LIMIT);
+    this.handoffs = handoffs.filter((candidate) => {
+      if (discard === 0 || retained.has(candidate.id)) return true;
+      discard -= 1;
+      return false;
+    });
     this.changed();
   }
 
@@ -498,8 +512,8 @@ export class MaterialService {
   latestHandoff(sessionId: string): MaterialHandoff | null {
     for (let index = this.handoffs.length - 1; index >= 0; index -= 1) {
       const handoff = this.handoffs[index];
-      if (handoff.sessionId !== sessionId) continue;
-      return handoff.delivery.state === "submitted" || handoff.delivery.state === "pasted" ? structuredClone(handoff) : null;
+      if (handoff.sessionId !== sessionId || (handoff.delivery.state !== "submitted" && handoff.delivery.state !== "pasted")) continue;
+      return structuredClone(handoff);
     }
     return null;
   }
@@ -660,7 +674,7 @@ export class MaterialService {
       createdAt: this.now(),
       reason,
       signature: live.signature,
-      natural: material.kind === "image" ? await readImageDimensions(this.blobs.pathOf(blob.sha256)) : null
+      natural: material.kind === "image" ? await readImageDimensions(this.blobs.pathOf(blob.sha256)).catch(() => null) : null
     };
     material.nextVersion += 1;
     material.versions.push(version);
@@ -704,8 +718,10 @@ export class MaterialService {
     const other = this.findByPath(resolved);
     if (other && other.id !== id) return failure("already-on-canvas");
     const type = materialType(basename(resolved));
-    if (type.kind !== material.kind) return failure("kind-mismatch");
+    const currentKind = material.kind === "file" ? materialType(basename(material.path)).kind : material.kind;
+    if (type.kind !== currentKind) return failure("kind-mismatch");
     material.path = resolved;
+    material.kind = type.kind;
     material.name = displayName(candidate);
     material.mimeType = type.mimeType;
     material.identity = fileIdentity(info);
@@ -994,13 +1010,14 @@ async function findRenamed(directory: string, identity: StoredFileIdentity): Pro
 }
 
 async function readImageDimensions(path: string): Promise<Size | null> {
-  const handle = await open(path, "r");
+  const handle = await open(path, READ_FILE_FLAGS);
   try {
+    if (!(await handle.stat()).isFile()) throw new MaterialBlobError("unreadable", "The image cannot be read.");
     const buffer = new Uint8Array(IMAGE_HEADER_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, IMAGE_HEADER_BYTES, 0);
     return imageDimensions(buffer.subarray(0, bytesRead));
   } finally {
-    await handle.close();
+    await handle.close().catch(() => undefined);
   }
 }
 

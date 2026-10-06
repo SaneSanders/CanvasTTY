@@ -61,23 +61,17 @@ export function RemarkPanel({
         </p>
       )}
       <div className="material-remark-panel__actions">
-        {needsWork ? (
+        {needsWork && (
+          <button type="button" className="material-remark-panel__primary" onClick={() => onAction("send")}>
+            <UiIcon name="send" size="1.05em" />{t(locale, "handoffSendToAgent")}
+          </button>
+        )}
+        {confirmingDelete ? (
           <>
-            <button type="button" className="material-remark-panel__primary" onClick={() => onAction("send")}>
-              <UiIcon name="send" size="1.05em" />{t(locale, "handoffSendToAgent")}
+            <button type="button" className="material-remark-panel__danger" onClick={() => onAction("delete")}>
+              <UiIcon name="trash" size="1.05em" />{t(locale, "remarkDeleteConfirm")}
             </button>
-            {confirmingDelete ? (
-              <>
-                <button type="button" className="material-remark-panel__danger" onClick={() => onAction("delete")}>
-                  <UiIcon name="trash" size="1.05em" />{t(locale, "remarkDeleteConfirm")}
-                </button>
-                <button type="button" onClick={() => setConfirmingDelete(false)}>{t(locale, "cancel")}</button>
-              </>
-            ) : (
-              <button type="button" className="material-remark-panel__danger" onClick={() => setConfirmingDelete(true)}>
-                <UiIcon name="trash" size="1.05em" />{t(locale, "remarkDelete")}
-              </button>
-            )}
+            <button type="button" onClick={() => setConfirmingDelete(false)}>{t(locale, "cancel")}</button>
           </>
         ) : (
           <button type="button" className="material-remark-panel__danger" onClick={() => setConfirmingDelete(true)}>
